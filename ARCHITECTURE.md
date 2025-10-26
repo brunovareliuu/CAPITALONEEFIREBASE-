@@ -185,23 +185,24 @@ match /transfers/{transferId} {
   1. `sendWelcomeWhatsApp` - Bienvenida al registrarse
   2. `sendDepositNotification` - Notificación al recibir dinero
   
-- **Templates**:
-  1. `bienvenida_capi` (APPROVED ✅)
-     - Trigger: Al crear cuenta
-     - Variable: Nombre del usuario
-  2. `nuevo_deposito_en_tu_cuenta` (APPROVED ✅)
-     - Trigger: Al recibir transferencia
-     - Variable: Nombre del remitente
+        - **Templates**:
+          1. `bienvenida_capi` (APPROVED ✅)
+             - Trigger: Al crear cuenta
+             - Variable: Nombre del usuario
+          2. `nuevo_deposito_en_tu_cuenta` (APPROVED ✅)
+             - Trigger: Al recibir transferencia
+             - Variable: **Nombre del receptor** (quien recibe el dinero)
 
 - **Idioma**: es_ES
 - **Secrets en Firebase Functions**:
   - `WHATSAPP_PHONE_NUMBER_ID`: 823229444210477
   - `WHATSAPP_ACCESS_TOKEN`: (configurado en Firebase Secrets)
-- **Integración**:
-  - Cliente: `src/services/whatsappService.js`
-  - Servidor: `functions/index.js`
-  - Llamadas: `signupscreen.js`, `firestoreService.js`
-  - Configuración: `WHATSAPP_CONFIG.md`
+        - **Integración**:
+          - Cliente: `src/services/whatsappService.js`
+          - Servidor: `functions/index.js`
+          - Llamadas: `signupscreen.js`, `TransferAmountScreen.js`
+          - Configuración: `WHATSAPP_CONFIG.md`
+          - **Nota**: El template de depósito envía el nombre del RECEPTOR (no del remitente)
 
 ## Dependencias Principales
 
