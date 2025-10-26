@@ -18,6 +18,7 @@ import {
   orderBy,
   runTransaction,
   collectionGroup,
+  limit,
 } from 'firebase/firestore';
 
 const db = getFirestore();
@@ -1985,6 +1986,560 @@ export const getExpenseCategorizationsForCard = (cardId, callback) => {
 };
 
 
+
+// --- Funciones para Cuentas Bancarias (Accounts) ---
+
+/**
+ * Crea una nueva cuenta bancaria en la colección 'accounts'.
+ * @param {object} accountData - Datos de la cuenta bancaria.
+ * @returns {Promise<DocumentReference>}
+ */
+export const createAccount = async (accountData, customId = null) => {
+  if (!accountData.userId) throw new Error('User ID is required to create an account.');
+
+  const accountsRef = collection(db, 'accounts');
+
+  let accountDoc;
+  if (customId) {
+    // Use custom ID
+    const customDocRef = doc(accountsRef, customId);
+    await setDoc(customDocRef, {
+      ...accountData,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    accountDoc = { id: customId };
+    console.log('✅ Account created in Firestore with custom ID:', customId);
+  } else {
+    // Use auto-generated ID
+    accountDoc = await addDoc(accountsRef, {
+      ...accountData,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    console.log('✅ Account created in Firestore with auto-generated ID:', accountDoc.id);
+  }
+
+  return accountDoc;
+};
+
+/**
+ * Actualiza el balance de una cuenta (usando transacción para consistencia)
+ * @param {string} accountId - ID de la cuenta
+ * @param {number} amount - Monto a agregar (positivo) o restar (negativo)
+ * @returns {Promise<{success: boolean, newBalance: number}>}
+ */
+export const updateAccountBalance = async (accountId, amount) => {
+  if (!accountId) throw new Error('Account ID is required');
+  if (typeof amount !== 'number') throw new Error('Amount must be a number');
+
+  const accountRef = doc(db, 'accounts', accountId);
+
+  try {
+    const result = await runTransaction(db, async (transaction) => {
+      const accountDoc = await transaction.get(accountRef);
+
+      if (!accountDoc.exists()) {
+        throw new Error('Account not found');
+      }
+
+      const currentData = accountDoc.data();
+      const currentBalance = currentData.balance || 0;
+      const newBalance = currentBalance + amount;
+
+      // Validar que no quede balance negativo (salvo overdraft permitido)
+      if (newBalance < 0 && !currentData.allowOverdraft) {
+        throw new Error('Insufficient funds');
+      }
+
+      transaction.update(accountRef, {
+        balance: newBalance,
+        updatedAt: serverTimestamp(),
+      });
+
+      return { success: true, newBalance, previousBalance: currentBalance };
+    });
+
+    console.log(`✅ Account ${accountId} balance updated: ${result.previousBalance} → ${result.newBalance}`);
+    return result;
+
+  } catch (error) {
+    console.error('❌ Error updating account balance:', error);
+    throw error;
+  }
+};
+
+// --- Funciones para Transacciones (Transactions) ---
+
+/**
+ * Crea una nueva transacción en la colección 'transactions'.
+ * @param {object} transactionData - Datos de la transacción.
+ * @returns {Promise<DocumentReference>}
+ */
+export const createTransaction = async (transactionData) => {
+  if (!transactionData.userId) throw new Error('User ID is required to create a transaction.');
+  if (!transactionData.type) throw new Error('Transaction type is required.');
+
+  const transactionsRef = collection(db, 'transactions');
+  const transactionDoc = await addDoc(transactionsRef, {
+    ...transactionData,
+    status: transactionData.status || 'completed',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  console.log('✅ Transaction created in Firestore with ID:', transactionDoc.id);
+  return transactionDoc;
+};
+
+/**
+ * Obtiene las transacciones de un usuario en tiempo real.
+ * @param {string} userId - ID del usuario.
+ * @param {function} callback - Función a llamar con las transacciones.
+ * @param {number} maxResults - Número máximo de transacciones (opcional).
+ * @returns {function} Función para desuscribirse.
+ */
+export const getUserTransactions = (userId, callback, maxResults = 50) => {
+  if (!userId) return () => {};
+
+  const transactionsRef = collection(db, 'transactions');
+  const q = query(
+    transactionsRef,
+    where('userId', '==', userId),
+    orderBy('createdAt', 'desc'),
+    limit(maxResults)
+  );
+
+  const unsubscribe = onSnapshot(q, (querySnapshot) => {
+    const transactions = [];
+    querySnapshot.forEach((doc) => {
+      transactions.push({ id: doc.id, ...doc.data() });
+    });
+    callback(transactions);
+  }, (error) => {
+    console.error('Error getting user transactions:', error);
+    callback([]);
+  });
+
+  return unsubscribe;
+};
+
+/**
+ * Obtiene una transacción específica por ID.
+ * @param {string} transactionId - ID de la transacción.
+ * @returns {Promise<DocumentSnapshot>}
+ */
+export const getTransactionById = (transactionId) => {
+  if (!transactionId) throw new Error('Transaction ID is required.');
+  const transactionRef = doc(db, 'transactions', transactionId);
+  return getDoc(transactionRef);
+};
+
+/**
+ * Obtiene las transacciones de una cuenta específica (como payer o payee).
+ * @param {string} accountId - ID de la cuenta.
+ * @param {string} userId - ID del usuario autenticado.
+ * @param {function} callback - Función a llamar con las transacciones.
+ * @param {number} maxResults - Número máximo de transacciones a obtener (default: 50).
+ * @returns {function} Función para desuscribirse.
+ */
+export const getAccountTransactions = (accountId, userId, callback, maxResults = 50) => {
+  if (!accountId || !userId) {
+    console.warn('Account ID and User ID are required for getAccountTransactions');
+    callback([]);
+    return () => {};
+  }
+
+  console.log('🔍 Getting transactions for account:', accountId, 'user:', userId);
+
+  const transactionsRef = collection(db, 'transactions');
+
+  // Crear consultas separadas para transacciones donde el usuario es payer o payee
+  // Usamos consultas simples que no requieren índices compuestos complejos
+  const payerQuery = query(
+    transactionsRef,
+    where('payerUserId', '==', userId),
+    orderBy('createdAt', 'desc'),
+    limit(maxResults * 2) // Obtener más para filtrar
+  );
+
+  const payeeQuery = query(
+    transactionsRef,
+    where('payeeUserId', '==', userId),
+    orderBy('createdAt', 'desc'),
+    limit(maxResults * 2) // Obtener más para filtrar
+  );
+
+  let payerTransactions = [];
+  let payeeTransactions = [];
+  let payerUnsubscribe = null;
+  let payeeUnsubscribe = null;
+
+  const combineAndCallback = () => {
+    // Combinar todas las transacciones
+    const allTransactions = [...payerTransactions, ...payeeTransactions];
+
+    // Filtrar por la cuenta específica
+    const accountTransactions = allTransactions.filter(transaction =>
+      transaction.payerAccountId === accountId || transaction.payeeAccountId === accountId
+    );
+
+    // Eliminar duplicados (por si acaso)
+    const uniqueTransactions = accountTransactions.filter((transaction, index, self) =>
+      index === self.findIndex(t => t.id === transaction.id)
+    );
+
+    // Ordenar por fecha descendente y limitar
+    const sortedTransactions = uniqueTransactions
+      .sort((a, b) => {
+        const dateA = a.createdAt?.toDate?.() || new Date(a.createdAt || 0);
+        const dateB = b.createdAt?.toDate?.() || new Date(b.createdAt || 0);
+        return dateB - dateA;
+      })
+      .slice(0, maxResults);
+
+    console.log('✅ Found', sortedTransactions.length, 'transactions for account', accountId);
+    callback(sortedTransactions);
+  };
+
+  // Listener para transacciones donde el usuario es payer
+  payerUnsubscribe = onSnapshot(payerQuery, (querySnapshot) => {
+    payerTransactions = [];
+    querySnapshot.forEach((doc) => {
+      payerTransactions.push({ id: doc.id, ...doc.data() });
+    });
+    combineAndCallback();
+  }, (error) => {
+    console.error('❌ Error getting payer transactions:', error);
+    payerTransactions = [];
+    combineAndCallback();
+  });
+
+  // Listener para transacciones donde el usuario es payee
+  payeeUnsubscribe = onSnapshot(payeeQuery, (querySnapshot) => {
+    payeeTransactions = [];
+    querySnapshot.forEach((doc) => {
+      payeeTransactions.push({ id: doc.id, ...doc.data() });
+    });
+    combineAndCallback();
+  }, (error) => {
+    console.error('❌ Error getting payee transactions:', error);
+    payeeTransactions = [];
+    combineAndCallback();
+  });
+
+  // Función para desuscribirse de ambos listeners
+  const unsubscribe = () => {
+    if (payerUnsubscribe) payerUnsubscribe();
+    if (payeeUnsubscribe) payeeUnsubscribe();
+  };
+
+  return unsubscribe;
+};
+
+/**
+ * Busca una cuenta por su número de cuenta (accountNumber) y tipo "Checking".
+ * Si se proporciona targetUserId, busca solo en las cuentas de ese usuario.
+ * Si no se proporciona, busca en toda la base de datos.
+ * @param {string} accountNumber - Número de cuenta a buscar.
+ * @param {string} targetUserId - ID del usuario propietario de la cuenta (opcional).
+ * @returns {Promise<{exists: boolean, accountData?: object, error?: string}>}
+ */
+export const findAccountByNumber = async (accountNumber, targetUserId = null) => {
+  if (!accountNumber) {
+    return { exists: false, error: 'Account number is required' };
+  }
+
+  try {
+    const accountsRef = collection(db, 'accounts');
+
+    // 🔥 Si se proporciona targetUserId, buscar por accountNumber, type "Checking" y userId específico
+    // 🔥 Si no se proporciona, buscar solo por accountNumber y type "Checking"
+    const queryConstraints = [
+      where('accountNumber', '==', accountNumber),
+      where('type', '==', 'Checking')
+    ];
+
+    // 🔥 Agregar filtro por userId si se proporciona
+    if (targetUserId) {
+      queryConstraints.push(where('userId', '==', targetUserId));
+      console.log('🔥 Searching account by number and userId:', accountNumber, targetUserId);
+    } else {
+      console.log('🔥 Searching account by number:', accountNumber);
+    }
+
+    const q = query(accountsRef, ...queryConstraints);
+    const querySnapshot = await getDocs(q);
+
+    if (!querySnapshot.empty) {
+      // Tomar el primer resultado (debería ser único)
+      const accountDoc = querySnapshot.docs[0];
+      const accountData = { id: accountDoc.id, ...accountDoc.data() };
+
+      console.log('✅ Account found:', accountData);
+
+      return {
+        exists: true,
+        accountData: accountData
+      };
+    } else {
+      const errorMsg = targetUserId
+        ? `Account not found for user ${targetUserId} or is not a checking account`
+        : 'Account not found or is not a checking account';
+      console.log('❌ Account not found:', accountNumber);
+      return {
+        exists: false,
+        error: errorMsg
+      };
+    }
+
+  } catch (error) {
+    console.error('❌ Error finding account by number:', error);
+    return {
+      exists: false,
+      error: 'Could not validate account'
+    };
+  }
+};
+
+/**
+ * Actualiza el estado de una transacción.
+ * @param {string} transactionId - ID de la transacción.
+ * @param {string} status - Nuevo estado ('pending', 'completed', 'failed', 'cancelled').
+ * @returns {Promise<void>}
+ */
+export const updateTransactionStatus = (transactionId, status) => {
+  if (!transactionId) throw new Error('Transaction ID is required.');
+  if (!['pending', 'completed', 'failed', 'cancelled'].includes(status)) {
+    throw new Error('Invalid transaction status.');
+  }
+
+  const transactionRef = doc(db, 'transactions', transactionId);
+  return updateDoc(transactionRef, {
+    status: status,
+    updatedAt: serverTimestamp(),
+  });
+};
+
+/**
+ * Crea una transferencia completa usando Firebase (sin Nessie).
+ * @param {string} payerAccountId - ID de la cuenta pagadora (de Firestore).
+ * @param {string} payeeAccountId - ID de la cuenta receptora (de Firestore).
+ * @param {number} amount - Monto a transferir.
+ * @param {string} medium - Medio de transferencia ('balance', 'rewards').
+ * @param {string} description - Descripción de la transferencia.
+ * @returns {Promise<object>} Resultado de la transferencia.
+ */
+export const createFirebaseTransfer = async (payerAccountId, payeeAccountId, amount, medium = 'balance', description = '') => {
+  console.log('🔥 Creating Firebase transfer:', { payerAccountId, payeeAccountId, amount, medium });
+
+  // PASO 1: Validar cuentas existen en Firestore
+  console.log('🔍 Validating accounts in Firestore...');
+
+  const [payerDoc, payeeDoc] = await Promise.all([
+    getAccountById(payerAccountId),
+    getAccountById(payeeAccountId)
+  ]);
+
+  if (!payerDoc.exists()) {
+    throw new Error('Payer account not found in Firebase');
+  }
+
+  if (!payeeDoc.exists()) {
+    throw new Error('Payee account not found in Firebase');
+  }
+
+  const payerData = payerDoc.data();
+  const payeeData = payeeDoc.data();
+
+  console.log('✅ Payer account:', payerData);
+  console.log('✅ Payee account:', payeeData);
+
+  // PASO 2: Verificar que ambas cuentas sean de tipo "Checking"
+  if (payerData.type !== 'Checking') {
+    throw new Error('Payer account must be a checking account');
+  }
+
+  if (payeeData.type !== 'Checking') {
+    throw new Error('Payee account must be a checking account');
+  }
+
+  // PASO 3: Verificar fondos suficientes
+  const availableBalance = medium === 'balance'
+    ? payerData.balance || 0
+    : payerData.rewards || 0;
+
+  if (availableBalance < amount) {
+    throw new Error(
+      `Insufficient ${medium}. Available: $${availableBalance.toFixed(2)}`
+    );
+  }
+
+  console.log('💰 Available balance:', availableBalance);
+  console.log('💸 Transfer amount:', amount);
+
+    // PASO 4: Ejecutar la transferencia usando transacciones de Firestore
+  console.log('🔄 Executing transfer with Firestore transactions...');
+
+  let transferResult;
+  try {
+    transferResult = await runTransaction(db, async (transaction) => {
+      // Obtener datos frescos de las cuentas
+      const freshPayerDoc = await transaction.get(payerDoc.ref);
+      const freshPayeeDoc = await transaction.get(payeeDoc.ref);
+
+      if (!freshPayerDoc.exists() || !freshPayeeDoc.exists()) {
+        throw new Error('One or both accounts no longer exist');
+      }
+
+      const freshPayerData = freshPayerDoc.data();
+      const freshPayeeData = freshPayeeDoc.data();
+
+      // Verificar fondos otra vez con datos frescos
+      const freshBalance = medium === 'balance'
+        ? freshPayerData.balance || 0
+        : freshPayerData.rewards || 0;
+
+      if (freshBalance < amount) {
+        throw new Error('Insufficient funds (balance changed during transfer)');
+      }
+
+      // Calcular nuevos balances
+      const newPayerBalance = freshBalance - amount;
+      const newPayeeBalance = (medium === 'balance'
+        ? freshPayeeData.balance || 0
+        : freshPayeeData.rewards || 0) + amount;
+
+      // Actualizar balances
+      transaction.update(payerDoc.ref, {
+        [medium]: newPayerBalance,
+        updatedAt: serverTimestamp(),
+      });
+
+      transaction.update(payeeDoc.ref, {
+        [medium === 'balance' ? 'balance' : 'rewards']: newPayeeBalance,
+        updatedAt: serverTimestamp(),
+      });
+
+      console.log('✅ Balances updated in transaction');
+      console.log('💰 Payer new balance:', newPayerBalance);
+      console.log('💰 Payee new balance:', newPayeeBalance);
+
+      // Retornar los balances calculados que se aplicaron en la transacción
+      return {
+        payerFinalBalance: newPayerBalance,
+        payeeFinalBalance: newPayeeBalance
+      };
+    });
+
+    // PASO 5: Crear registro de transacción
+    console.log('📝 Creating transaction record...');
+    const transactionData = {
+      userId: payerData.userId, // Usuario que realiza la transferencia
+      type: 'transfer_out', // Tipo de transacción
+      amount: amount,
+      medium: medium,
+      description: description || 'Firebase Transfer',
+
+      // Información del pagador
+      payerAccountId: payerAccountId,
+      payerAccountNumber: payerData.accountNumber,
+      payerName: payerData.nickname || 'Unknown',
+      payerUserId: payerData.userId, // UID del usuario que envía
+
+      // Información del receptor
+      payeeAccountId: payeeAccountId,
+      payeeAccountNumber: payeeData.accountNumber,
+      payeeName: payeeData.nickname || 'Unknown',
+      payeeUserId: payeeData.userId, // UID del usuario que recibe
+
+      // Balances (después de la transferencia)
+      previousBalance: availableBalance,
+      newBalance: availableBalance - amount,
+
+      // Metadata
+      status: 'completed',
+      transactionDate: new Date().toISOString().split('T')[0],
+      createdBy: payerData.userId,
+      isFirebaseTransfer: true, // Flag para identificar transferencias de Firebase
+    };
+
+    const transactionDoc = await createTransaction(transactionData);
+    console.log('✅ Transaction record created:', transactionDoc.id);
+
+    // PASO 6: Retornar resultado compatible
+    return {
+      transferId: transactionDoc.id,
+      transfer: transactionData,
+      payerAccount: {
+        id: payerAccountId,
+        nickname: payerData.nickname,
+        balance: transferResult.payerFinalBalance
+      },
+      payeeAccount: {
+        id: payeeAccountId,
+        nickname: payeeData.nickname,
+        balance: transferResult.payeeFinalBalance
+      }
+    };
+
+  } catch (error) {
+    console.error('❌ Firebase transfer failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Obtiene las cuentas de un usuario en tiempo real.
+ * @param {string} userId - ID del usuario.
+ * @param {function} callback - Función a llamar con las cuentas.
+ * @returns {function} Función para desuscribirse.
+ */
+export const getUserAccounts = (userId, callback) => {
+  if (!userId) return () => {};
+
+  const accountsRef = collection(db, 'accounts');
+  const q = query(accountsRef, where('userId', '==', userId));
+
+  const unsubscribe = onSnapshot(q, (querySnapshot) => {
+    const accounts = [];
+    querySnapshot.forEach((doc) => {
+      accounts.push({ id: doc.id, ...doc.data() });
+    });
+    callback(accounts);
+  }, (error) => {
+    console.error('Error getting user accounts:', error);
+    callback([]);
+  });
+
+  return unsubscribe;
+};
+
+/**
+ * Actualiza una cuenta bancaria.
+ * @param {string} accountId - ID de la cuenta.
+ * @param {object} updateData - Datos a actualizar.
+ * @returns {Promise<void>}
+ */
+export const updateAccount = (accountId, updateData) => {
+  if (!accountId) throw new Error('Account ID is required to update.');
+  const accountRef = doc(db, 'accounts', accountId);
+  return updateDoc(accountRef, {
+    ...updateData,
+    updatedAt: serverTimestamp(),
+  });
+};
+
+/**
+ * Obtiene una cuenta específica por ID.
+ * @param {string} accountId - ID de la cuenta.
+ * @returns {Promise<DocumentSnapshot>}
+ */
+export const getAccountById = (accountId) => {
+  if (!accountId) throw new Error('Account ID is required.');
+  const accountRef = doc(db, 'accounts', accountId);
+  return getDoc(accountRef);
+};
 
 // --- Funciones para Tarjetas Digitales ---
 

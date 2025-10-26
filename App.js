@@ -644,9 +644,10 @@ const AppNavigation = () => {
           <Stack.Navigator screenOptions={{ headerShown: false }}>
             <Stack.Screen name="NickNameDebit" component={NickNameDebitScreen} />
           </Stack.Navigator>
-        ) : completedAccountQuiz && !hasTarjetasDigitales && hasNessieAccount ? (
+        ) : !hasTarjetasDigitales ? (
           // Usuario que completó el quiz pero sin tarjeta digital -> crear tarjeta
           <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="NickNameDebit" component={NickNameDebitScreen} />
             <Stack.Screen name="TarjetaDigital" component={TarjetaDigitalScreen} />
           </Stack.Navigator>
         ) : (

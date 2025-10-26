@@ -14,13 +14,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { validateAccountExists } from '../services/nessieService';
-import { saveContact, getContactByCLABE } from '../services/firestoreService';
+import { saveContact, getContactByCLABE, findAccountByNumber } from '../services/firestoreService';
 import StandardHeader from '../components/StandardHeader';
 
 const TransferAddContactScreen = ({ navigation, route }) => {
   const { user } = useAuth();
   const { tarjetaDigital, prefilledCLABE, prefilledNessieAccountId } = route.params || {};
-  
+
+  console.log('🔥 TransferAddContactScreen - Route params:', route.params);
+
   // If CLABE is prefilled, start at step 2
   const [step, setStep] = useState(prefilledCLABE ? 2 : 1);
   
@@ -28,7 +30,7 @@ const TransferAddContactScreen = ({ navigation, route }) => {
   const [clabe, setClabe] = useState(prefilledCLABE || '');
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState('');
-  const [nessieAccountId, setNessieAccountId] = useState(prefilledNessieAccountId || '');
+  const [accountId, setAccountId] = useState(prefilledNessieAccountId || ''); // 🔥 Ahora es el ID de Firestore
   
   // Step 2: Name & Alias
   const [contactName, setContactName] = useState('');
@@ -47,7 +49,7 @@ const TransferAddContactScreen = ({ navigation, route }) => {
     if (cleaned.length <= 16 && /^\d*$/.test(cleaned)) {
       setClabe(cleaned);
       setValidationError('');
-      setNessieAccountId('');
+      setAccountId('');
       
       // Auto-validate when 16 digits are entered
       if (cleaned.length === 16) {
@@ -56,18 +58,25 @@ const TransferAddContactScreen = ({ navigation, route }) => {
     }
   };
 
-  const isStep1Valid = clabe.length === 16 && !validationError && !isValidating && nessieAccountId;
+  const isStep1Valid = clabe.length === 16 && !validationError && !isValidating && accountId;
 
   const validateCLABE = async (clabeToValidate) => {
     const clabeValue = clabeToValidate || clabe;
-    if (clabeValue.length !== 16) return;
+    if (clabeValue.length !== 16) {
+      console.log('⚠️ CLABE too short:', clabeValue.length);
+      return;
+    }
 
-    console.log('🔍 Validating CLABE:', clabeValue);
+    console.log('🔍 Validating account number:', clabeValue);
+    console.log('🔥 Starting validation process...');
+
+    // 🔥 Limpiar estado anterior
     setIsValidating(true);
     setValidationError('');
-    setNessieAccountId('');
+    setAccountId('');
 
     try {
+      console.log('🔍 Checking if contact already exists...');
       // Check if contact already exists
       const existingContact = await getContactByCLABE(user.uid, clabeValue);
       if (existingContact) {
@@ -77,28 +86,32 @@ const TransferAddContactScreen = ({ navigation, route }) => {
         return;
       }
 
-      // Validate account exists in Nessie API
-      console.log('🌐 Checking Nessie API...');
-      const validation = await validateAccountExists(clabeValue);
-      
+      console.log('🔥 Searching account in Firestore by number...');
+      // 🔥 Buscar cuenta en Firestore por accountNumber y tipo "Checking" (en toda la base de datos)
+      const validation = await findAccountByNumber(clabeValue);
+
       if (validation.exists) {
-        console.log('✅ Account found:', validation.accountData.id);
-        setNessieAccountId(validation.accountData.id);
+        console.log('✅ Account found in Firestore:', validation.accountData);
+        console.log('✅ Setting accountId to:', validation.accountData.id);
+        // 🔥 Ahora accountId será el ID de Firestore
+        setAccountId(validation.accountData.id);
         setValidationError('');
+        console.log('✅ Validation successful');
       } else {
-        console.log('❌ Account not found in Nessie API');
-        setValidationError('Account not found');
+        console.log('❌ Account not found in Firestore:', validation.error);
+        setValidationError(validation.error || 'Account not found');
       }
     } catch (error) {
       console.error('❌ Validation error:', error);
       setValidationError(error.message || 'Could not validate account');
     } finally {
+      console.log('🔄 Validation process finished');
       setIsValidating(false);
     }
   };
 
   const handleNextStep = async () => {
-    if (clabe.length === 16 && !nessieAccountId) {
+    if (clabe.length === 16 && !accountId) {
       // Need to validate first
       await validateCLABE();
       // After validation, check if valid
@@ -112,14 +125,14 @@ const TransferAddContactScreen = ({ navigation, route }) => {
 
   // Auto-advance to step 2 after successful validation
   useEffect(() => {
-    if (step === 1 && nessieAccountId && !validationError && clabe.length === 16) {
+    if (step === 1 && accountId && !validationError && clabe.length === 16) {
       // Small delay to show the checkmark
       const timer = setTimeout(() => {
         setStep(2);
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [nessieAccountId, validationError, clabe, step]);
+  }, [accountId, validationError, clabe, step]);
 
   const handleSaveContact = async () => {
     if (!contactName.trim() || contactName.trim().length < 3) {
@@ -134,7 +147,9 @@ const TransferAddContactScreen = ({ navigation, route }) => {
         contactName: contactName.trim(),
         contactAlias: contactAlias.trim(),
         contactCLABE: clabe,
-        contactNessieAccountId: nessieAccountId,
+        contactAccountId: accountId, // 🔥 Ahora es el ID de Firestore
+        // Mantenemos compatibilidad con versiones anteriores
+        contactNessieAccountId: accountId,
       };
 
       const contactId = await saveContact(user.uid, contactData);
@@ -207,7 +222,7 @@ const TransferAddContactScreen = ({ navigation, route }) => {
                 maxLength={19}
                 autoFocus
               />
-              {clabe.length === 16 && !isValidating && !validationError && nessieAccountId && (
+              {clabe.length === 16 && !isValidating && !validationError && accountId && (
                 <Icon name="check-circle" size={24} color="#34C759" style={styles.validationIcon} />
               )}
               {isValidating && (
@@ -226,7 +241,7 @@ const TransferAddContactScreen = ({ navigation, route }) => {
               </View>
             )}
 
-            {clabe.length === 16 && !isValidating && nessieAccountId && (
+            {clabe.length === 16 && !isValidating && accountId && (
               <View style={styles.successContainer}>
                 <Icon name="check-circle" size={16} color="#34C759" />
                 <Text style={styles.successText}>Account found! You can create this contact.</Text>

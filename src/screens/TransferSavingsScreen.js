@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { getUserProfile } from '../services/firestoreService';
+import { getUserProfile, createTransaction, updateAccountBalance, createFirebaseTransfer } from '../services/firestoreService';
 import {
   validateAccountExists,
   createTransfer,
@@ -120,6 +120,62 @@ const TransferSavingsScreen = ({ navigation, route }) => {
     setShowConfirmModal(true);
   };
 
+  // 🔥 Nueva versión usando Firebase (reemplaza Nessie)
+  const executeTransferWithFirebase = async () => {
+    setShowConfirmModal(false);
+    setTransferring(true);
+
+    try {
+      const amt = parseFloat(amount);
+      console.log('🔥 Iniciando transferencia interna con Firebase...');
+
+      // Usar createFirebaseTransfer para transferencias internas
+      console.log('🔥 Creating internal Firebase transfer:', {
+        from: fromAccount.id,
+        to: toAccount.id,
+        amount: amt
+      });
+
+      const result = await createFirebaseTransfer(
+        fromAccount.id,
+        toAccount.id,
+        amt,
+        'balance',
+        'Transfer to Savings'
+      );
+
+      console.log('✅ Internal transfer completed:', result);
+
+      // Emitir eventos para actualizar UI en tiempo real
+      EventBus.emit('balance:updated', {
+        accountId: fromAccount.id,
+        newBalance: result.payerAccount.balance,
+        timestamp: Date.now(),
+      });
+
+      EventBus.emit('balance:updated', {
+        accountId: toAccount.id,
+        newBalance: result.payeeAccount.balance,
+        timestamp: Date.now(),
+      });
+
+      // Navegar a confirmación
+      navigation.replace('TransferConfirmation', {
+        transfer: result,
+        previousBalance: checkingBalance,
+        updatedPayerBalance: result.payerAccount.balance,
+        amount: amt,
+      });
+
+    } catch (error) {
+      console.error('❌ Transfer error:', error);
+      Alert.alert('Transfer Failed', error.message || 'An error occurred during the transfer');
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  // 🔄 Versión original usando Nessie (mantener por compatibilidad)
   const executeTransfer = async () => {
     setShowConfirmModal(false);
     setTransferring(true);
@@ -370,7 +426,7 @@ const TransferSavingsScreen = ({ navigation, route }) => {
 
                 <TouchableOpacity
                   style={styles.confirmButtonConfirm}
-                  onPress={executeTransfer}
+                  onPress={executeTransferWithFirebase} // 🔥 Usar Firebase
                   activeOpacity={0.7}
                 >
                   <Text style={styles.confirmButtonConfirmText}>Transfer</Text>

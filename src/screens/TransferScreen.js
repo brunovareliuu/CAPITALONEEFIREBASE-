@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { getUserProfile } from '../services/firestoreService';
+import { getUserProfile, createTransaction, updateAccountBalance, getAccountById } from '../services/firestoreService';
 import {
   validateAccountExists,
   createTransfer,
@@ -145,6 +145,104 @@ const TransferScreen = ({ navigation }) => {
     setShowConfirmModal(true);
   };
 
+  // 🔥 Nueva versión usando Firebase (reemplaza Nessie)
+  const executeTransferWithFirebase = async () => {
+    setShowConfirmModal(false);
+    setTransferring(true);
+
+    try {
+      const amt = parseFloat(amount);
+      console.log('🔥 Iniciando transferencia con Firebase...');
+
+      // Paso 1: Obtener cuenta del pagador desde Firebase
+      const payerAccountDoc = await getAccountById(selectedAccount.id);
+      if (!payerAccountDoc.exists()) {
+        throw new Error('Payer account not found in Firebase');
+      }
+
+      const payerAccountData = payerAccountDoc.data();
+      const previousBalance = payerAccountData.balance;
+      const expectedNewBalance = previousBalance - amt;
+
+      console.log('💰 Balance ANTES del transfer:', previousBalance);
+      console.log('💰 Monto a transferir:', amt);
+      console.log('💰 Balance ESPERADO después:', expectedNewBalance);
+
+      // Paso 2: Verificar fondos suficientes
+      if (expectedNewBalance < 0 && !payerAccountData.allowOverdraft) {
+        throw new Error('Insufficient funds');
+      }
+
+      // Paso 3: Actualizar balance del pagador
+      console.log('📝 Actualizando balance del pagador...');
+      const payerBalanceUpdate = await updateAccountBalance(selectedAccount.id, -amt);
+      console.log('✅ Balance del pagador actualizado:', payerBalanceUpdate.newBalance);
+
+      // Paso 4: Crear transacción en Firebase
+      console.log('📝 Creando transacción en Firebase...');
+      const transactionData = {
+        userId: user.uid,
+        type: 'transfer_out', // transfer_out, transfer_in, payment, etc.
+        amount: amt,
+        medium: medium, // 'balance' o 'rewards'
+        description: description || 'P2P Transfer',
+
+        // Información del pagador
+        payerAccountId: selectedAccount.id,
+        payerAccountNumber: selectedAccount.accountNumber,
+        payerName: selectedAccount.nickname,
+
+        // Información del receptor
+        payeeAccountId: verifiedAccountData.id,
+        payeeAccountNumber: verifiedAccountData.account_number,
+        payeeName: verifiedAccountData.nickname,
+
+        // Balances
+        previousBalance: previousBalance,
+        newBalance: payerBalanceUpdate.newBalance,
+
+        // Metadata
+        status: 'completed',
+        transactionDate: new Date().toISOString().split('T')[0],
+        createdBy: user.uid,
+      };
+
+      const transactionDoc = await createTransaction(transactionData);
+      console.log('✅ Transacción creada en Firebase:', transactionDoc.id);
+
+      // Paso 5: Emitir evento para actualizar UI en tiempo real
+      EventBus.emit('balance:updated', {
+        accountId: selectedAccount.id,
+        newBalance: payerBalanceUpdate.newBalance,
+        timestamp: Date.now(),
+      });
+
+      // Paso 6: Navegar a confirmación
+      navigation.replace('TransferConfirmation', {
+        transfer: {
+          transferId: transactionDoc.id,
+          ...transactionData,
+          payerAccount: {
+            id: selectedAccount.id,
+            nickname: selectedAccount.nickname,
+            balance: payerBalanceUpdate.newBalance
+          },
+          payeeAccount: verifiedAccountData
+        },
+        previousBalance: previousBalance,
+        updatedPayerBalance: payerBalanceUpdate.newBalance,
+        amount: amt,
+      });
+
+    } catch (error) {
+      console.error('❌ Transfer error:', error);
+      Alert.alert('Transfer Failed', error.message || 'An error occurred during the transfer');
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  // 🔄 Versión original usando Nessie (mantener por compatibilidad)
   const executeTransfer = async () => {
     setShowConfirmModal(false);
     setTransferring(true);
@@ -561,7 +659,7 @@ const TransferScreen = ({ navigation }) => {
 
                 <TouchableOpacity
                   style={styles.confirmButtonConfirm}
-                  onPress={executeTransfer}
+                  onPress={executeTransferWithFirebase} // 🔥 Usar Firebase
                   activeOpacity={0.7}
                 >
                   <Text style={styles.confirmButtonConfirmText}>Confirm</Text>

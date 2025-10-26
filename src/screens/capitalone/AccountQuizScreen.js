@@ -19,7 +19,7 @@ import { StatusBar } from 'expo-status-bar';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
-import { getUserProfile, updateUserProfile, addCard } from '../../services/firestoreService';
+import { getUserProfile, updateUserProfile, addCard, createAccount, updateAccount } from '../../services/firestoreService';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -187,103 +187,191 @@ const AccountQuizScreen = ({ navigation, route }) => {
     setLoading(true);
 
     try {
-      // Get user profile to get nessieCustomerId
+      // Get user profile - Firebase UID always exists, nessieCustomerId may be null
       const userDoc = await getUserProfile(user.uid);
       if (!userDoc.exists()) {
         throw new Error('User profile not found');
       }
 
       const userData = userDoc.data();
-      const nessieCustomerId = userData.nessieCustomerId;
+      const firebaseUID = user.uid; // Always available
+      const nessieCustomerId = userData.nessieCustomerId; // May be null if Nessie failed
+      const userCurrency = userData.currency?.code || 'MXN';
 
-      if (!nessieCustomerId) {
-        throw new Error('Nessie Customer ID not found');
-      }
+      console.log('🔍 User data loaded:');
+      console.log('  Firebase UID:', firebaseUID);
+      console.log('  Nessie Customer ID:', nessieCustomerId || 'Not available');
+      console.log('  Currency:', userCurrency);
 
-      // Prepare account data
+      // Generate account number (always 16 digits)
       const accountNumber = generateAccountNumber();
-      const balance = selectedType === 'Credit Card'
-        ? 7000 // Credit limit for credit cards
-        : selectedType === 'Checking'
-        ? 10000 // Initial balance for debit cards
-        : selectedType === 'Savings'
-        ? 1000 // Initial balance for savings accounts
-        : 5000; // Initial balance for other account types
+      console.log('🎯 Generated account number:', accountNumber);
 
-      const accountData = {
-        type: selectedType,
-        nickname: nickname.trim(),
-        rewards: 0,
-        balance: balance,
-        account_number: accountNumber,
+      // Generate custom account ID (unique identifier for easier management)
+      const generateAccountId = () => {
+        const timestamp = Date.now().toString(36);
+        const randomPart = Math.random().toString(36).substring(2, 8);
+        return `acc_${timestamp}_${randomPart}`;
       };
 
-      // Create account in Nessie API
-      const NESSIE_API_KEY = 'cf56fb5b0f0c73969f042c7ad5457306';
-      const url = `http://api.nessieisreal.com/customers/${nessieCustomerId}/accounts?key=${NESSIE_API_KEY}`;
+      const customAccountId = generateAccountId();
+      console.log('🎯 Generated custom account ID:', customAccountId);
 
-      console.log('Creating account in Nessie API...');
-      console.log('Account data:', accountData);
+      // Determine account type and balance
+      const accountTypeMap = {
+        'Credit Card': { type: 'credit', balance: 7000 },
+        'Savings': { type: 'savings', balance: 1000 },
+        'Checking': { type: 'debit', balance: 10000 }
+      };
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(accountData),
-      });
+      const accountConfig = accountTypeMap[selectedType];
+      const balance = accountConfig.balance;
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Nessie API Error:', response.status, errorText);
-        throw new Error(`Failed to create account: ${response.status}`);
+      // === STEP 1: Create account in Firebase FIRST (always succeeds) ===
+      console.log('📝 Creating account in Firebase...');
+
+      const firebaseAccountData = {
+        // Firebase identifiers
+        userId: firebaseUID,
+
+        // Account information
+        type: selectedType,
+        accountType: accountConfig.type, // 'debit', 'credit', 'savings'
+        nickname: nickname.trim(),
+        accountNumber: accountNumber,
+
+        // Financial status
+        balance: balance, // Current balance
+        initialBalance: balance,
+        rewards: 0,
+
+        // Configuration
+        currency: userCurrency,
+        isActive: true,
+        allowOverdraft: selectedType === 'Checking',
+        dailyLimit: selectedType === 'Credit Card' ? balance : 5000,
+        monthlyLimit: selectedType === 'Credit Card' ? balance * 2 : 50000,
+
+        // Nessie compatibility
+        nessieCustomerId: nessieCustomerId, // May be null
+        nessieAccountId: null, // Will be set if Nessie succeeds
+        nessieStatus: nessieCustomerId ? 'pending' : 'failed',
+
+        // Metadata
+        digitalCards: [], // Will store digital card IDs
+        transactions: [], // Recent transactions
+        createdAt: new Date(),
+      };
+
+      console.log('🔥 About to call createAccount with customId:', customAccountId);
+      const firebaseAccountDoc = await createAccount(firebaseAccountData, customAccountId);
+      const firebaseAccountId = customAccountId;
+
+      console.log('✅ Account created in Firebase with ID:', firebaseAccountId);
+      console.log('✅ Returned doc ID:', firebaseAccountDoc.id);
+
+      // === STEP 2: Try to create account in Nessie (may fail) ===
+      let nessieAccountId = null;
+      let nessieStatus = 'failed';
+
+      if (nessieCustomerId) {
+        try {
+          console.log('🔄 Attempting to create account in Nessie API...');
+
+          const nessieAccountData = {
+            type: selectedType,
+            nickname: nickname.trim(),
+            rewards: 0,
+            balance: balance,
+            account_number: accountNumber,
+          };
+
+          const NESSIE_API_KEY = 'cf56fb5b0f0c73969f042c7ad5457306';
+          const nessieUrl = `http://api.nessieisreal.com/customers/${nessieCustomerId}/accounts?key=${NESSIE_API_KEY}`;
+
+          const response = await fetch(nessieUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(nessieAccountData),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.warn('⚠️ Nessie API failed:', response.status, errorText);
+          } else {
+            const result = await response.json();
+            nessieAccountId = result.objectCreated._id;
+            nessieStatus = 'completed';
+            console.log('✅ Account also created in Nessie with ID:', nessieAccountId);
+
+            // Update Firebase account with Nessie ID
+            await updateAccount(firebaseAccountId, {
+              nessieAccountId: nessieAccountId,
+              nessieStatus: 'completed',
+            });
+          }
+        } catch (nessieError) {
+          console.warn('⚠️ Nessie API failed, but continuing with Firebase only:', nessieError.message);
+          nessieStatus = 'failed';
+        }
+      } else {
+        console.log('ℹ️ No Nessie Customer ID available, skipping Nessie account creation');
       }
 
-      const result = await response.json();
-      console.log('Account created successfully:', result);
+      // === STEP 3: Update user profile ===
+      console.log('📝 Updating user profile...');
 
-      // Save card to Firestore for regular cards (not digital cards)
-      if (selectedType !== 'Checking') { // Don't save debit cards here, they get saved as digital cards later
-        const cardData = {
-          name: nickname.trim(),
-          type: selectedType,
-          initialBalance: balance,
-          ownerId: user.uid,
-          members: [user.uid],
-          isShared: false,
-          color: selectedType === 'Credit Card' ? '#004977' : '#FF8C00', // Blue for credit, orange for savings
-          nessieAccountId: result.objectCreated._id,
-          creditLimit: selectedType === 'Credit Card' ? balance : 0, // Credit limit equals balance for credit cards
-          balance: balance, // Available balance
-          usedBalance: 0, // Amount used (for credit cards)
-          createdAt: new Date(),
-        };
+      // Get current user data to preserve existing accounts array
+      const currentAccounts = userData.accounts?.allAccounts || [];
+      const updatedAccounts = {
+        primaryDebitAccount: selectedType === 'Checking' ? firebaseAccountId : (userData.accounts?.primaryDebitAccount || null),
+        allAccounts: [...currentAccounts, firebaseAccountId],
+        totalBalance: (userData.accounts?.totalBalance || 0) + balance,
+      };
 
-        await addCard(user.uid, cardData);
-        console.log('Card saved to Firestore:', cardData);
-      }
-
-      // Marcar que el usuario completó el quiz de cuenta
-      await updateUserProfile(user.uid, {
+      await updateUserProfile(firebaseUID, {
         completedAccountQuiz: true,
+        accounts: updatedAccounts,
+        nessieStatus: nessieStatus, // Update overall Nessie status
       });
 
-      // Navigate based on account type
+      console.log('✅ User profile updated');
+      console.log('🎉 Account creation completed!');
+      console.log('  Firebase Account ID:', firebaseAccountId);
+      console.log('  Nessie Status:', nessieStatus);
+      if (nessieAccountId) {
+        console.log('  Nessie Account ID:', nessieAccountId);
+      }
+
+      // === STEP 4: Navigate based on account type ===
       if (selectedType === 'Checking') {
         // For debit cards, go to NickNameDebitScreen first
         navigation.navigate('NickNameDebit', {
-          debitCardAccount: result.objectCreated,
+          debitCardAccount: {
+            id: firebaseAccountId,
+            ...firebaseAccountData,
+            nessieAccountId: nessieAccountId,
+            nessieStatus: nessieStatus,
+          },
         });
       } else {
-        // For credit cards, go directly to TarjetaDigitalScreen
+        // For credit cards and savings, go directly to TarjetaDigitalScreen
         navigation.navigate('TarjetaDigital', {
           nickname: nickname.trim(),
-          accountData: result.objectCreated,
+          accountId: firebaseAccountId, // Pass Firebase account ID
+          accountData: {
+            id: firebaseAccountId,
+            ...firebaseAccountData,
+            nessieAccountId: nessieAccountId,
+            nessieStatus: nessieStatus,
+          },
         });
       }
 
     } catch (error) {
-      console.error('Error creating account:', error);
+      console.error('❌ Error creating account:', error);
       Alert.alert(
         'Error',
         'Could not create account. Please try again.'

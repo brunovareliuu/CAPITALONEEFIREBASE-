@@ -201,5 +201,33 @@ match /transactions/{transactionId} {
       allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
       allow update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
     }
+
+    // --- Colección de Cuentas Bancarias (Accounts) ---
+    match /accounts/{accountId} {
+      // El propietario puede leer su cuenta
+      allow read: if isSignedIn() && request.auth.uid == resource.data.userId;
+      // Usuarios autenticados pueden leer cuentas de tipo "Checking" para transferencias
+      allow read: if isSignedIn() && resource.data.type == 'Checking';
+      // Solo el propietario puede crear su cuenta
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      // Solo el propietario puede actualizar su cuenta
+      allow update: if isSignedIn() && request.auth.uid == resource.data.userId;
+      // Permitir actualizaciones durante transferencias (solo para cuentas de tipo "Checking")
+      allow update: if isSignedIn() && resource.data.type == 'Checking';
+    }
+
+    // --- Colección de Transacciones (Transactions) ---
+    match /transactions/{transactionId} {
+      // El usuario puede leer transacciones donde es el payer o payee
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.userId ||
+        request.auth.uid == resource.data.payerUserId ||
+        request.auth.uid == resource.data.payeeUserId
+      );
+      // Solo el propietario (payer) puede crear su transacción
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      // Solo el propietario puede actualizar/eliminar su transacción
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
+    }
   }
 }

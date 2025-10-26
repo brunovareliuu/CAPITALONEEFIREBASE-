@@ -8,7 +8,6 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
@@ -23,6 +22,7 @@ import {
 } from '../services/firebaseRecurringService';
 import { deleteBill } from '../services/nessieService';
 import { migrateAsyncStorageToFirebase, checkMigrationNeeded } from '../services/migrationService';
+import StandardHeader from '../components/StandardHeader';
 
 const BillsDetailsScreen = ({ navigation, route }) => {
   const { user } = useAuth();
@@ -258,42 +258,37 @@ const BillsDetailsScreen = ({ navigation, route }) => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <StatusBar style="dark" />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Icon name="arrow-left" size={20} color="#004977" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Detalles de Factura</Text>
-        <TouchableOpacity
-          style={styles.menuButton}
-          onPress={() => {
-            Alert.alert(
-              'Opciones',
-              '¿Qué deseas hacer con esta factura?',
-              [
-                { text: 'Cancelar', style: 'cancel' },
-                {
-                  text: 'Marcar como Cancelada',
-                  onPress: handleDeleteBill
-                },
-                {
-                  text: 'Eliminar Permanentemente',
-                  style: 'destructive',
-                  onPress: handlePermanentDelete
-                }
-              ]
-            );
-          }}
-        >
-          <Icon name="ellipsis-v" size={20} color="#004977" />
-        </TouchableOpacity>
-      </View>
+      <StandardHeader
+        title="Bill Details"
+        onBack={() => navigation.goBack()}
+        rightComponent={(
+          <TouchableOpacity
+            onPress={() => {
+              Alert.alert(
+                'Options',
+                'What do you want to do with this bill?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Mark as Cancelled',
+                    onPress: handleDeleteBill
+                  },
+                  {
+                    text: 'Delete Permanently',
+                    style: 'destructive',
+                    onPress: handlePermanentDelete
+                  }
+                ]
+              );
+            }}
+          >
+            <Icon name="ellipsis-v" size={20} color="#007AFF" />
+          </TouchableOpacity>
+        )}
+      />
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
 
@@ -456,7 +451,7 @@ const BillsDetailsScreen = ({ navigation, route }) => {
         </View>
 
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -465,37 +460,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#ffffff',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: '#fff',
-    marginBottom: 10,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1a1a1a',
-  },
-  menuButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   content: {
     flex: 1,
-    paddingHorizontal: 20,
   },
   card: {
     backgroundColor: '#fff',

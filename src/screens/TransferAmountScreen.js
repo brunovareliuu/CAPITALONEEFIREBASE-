@@ -14,8 +14,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { createTransfer, getAccountById } from '../services/nessieService';
-import { updateContactLastUsed } from '../services/firestoreService';
+import { createTransfer, getAccountById as getNessieAccountById } from '../services/nessieService';
+import { updateContactLastUsed, getAccountById, createFirebaseTransfer } from '../services/firestoreService';
 import EventBus from '../utils/EventBus';
 import StandardHeader from '../components/StandardHeader';
 
@@ -33,28 +33,51 @@ const TransferAmountScreen = ({ navigation, route }) => {
   useEffect(() => {
     const fetchRealBalance = async () => {
       console.log('📊 TransferAmountScreen - tarjetaDigital received:', tarjetaDigital);
-      
-      if (!tarjetaDigital?.nessieAccountId) {
-        console.warn('⚠️ No nessieAccountId found in tarjetaDigital');
+
+      // 🔥 Determinar qué ID usar para obtener el balance
+      const accountIdToUse = tarjetaDigital?.nessieAccountId || tarjetaDigital?.accountId;
+
+      if (!accountIdToUse) {
+        console.warn('⚠️ No account ID found in tarjetaDigital');
+        // Fallback to stored balance
+        const fallbackBalance = tarjetaDigital?.saldo || tarjetaDigital?.balance || 0;
+        console.log('⚠️ Using fallback balance from tarjetaDigital:', fallbackBalance);
+        setDebitBalance(fallbackBalance);
         setLoading(false);
         return;
       }
 
       try {
-        // Fetch REAL balance from Nessie API
-        console.log('🌐 Fetching real balance from Nessie API for account:', tarjetaDigital.nessieAccountId);
-        const accountData = await getAccountById(tarjetaDigital.nessieAccountId);
-        
-        const realBalance = accountData.balance || 0;
-        console.log('💰 Real balance from Nessie API:', realBalance);
-        console.log('📊 Full account data:', accountData);
-        
-        setDebitBalance(realBalance);
+        if (tarjetaDigital?.nessieAccountId) {
+          // 🔥 Cuenta antigua - usar Nessie API
+          console.log('🌐 Fetching real balance from Nessie API for account:', tarjetaDigital.nessieAccountId);
+          const accountData = await getNessieAccountById(tarjetaDigital.nessieAccountId);
+
+          const realBalance = accountData.balance || 0;
+          console.log('💰 Real balance from Nessie API:', realBalance);
+          setDebitBalance(realBalance);
+        } else if (tarjetaDigital?.accountId) {
+          // 🔥 Cuenta nueva - usar Firestore
+          console.log('🔥 Fetching balance from Firestore for account:', tarjetaDigital.accountId);
+          const accountDoc = await getAccountById(tarjetaDigital.accountId);
+
+          if (accountDoc.exists()) {
+            const accountData = accountDoc.data();
+            const realBalance = accountData.balance || 0;
+            console.log('💰 Real balance from Firestore:', realBalance);
+            console.log('📊 Full account data from Firestore:', accountData);
+            setDebitBalance(realBalance);
+          } else {
+            console.warn('⚠️ Account not found in Firestore');
+            const fallbackBalance = tarjetaDigital?.saldo || tarjetaDigital?.balance || 0;
+            setDebitBalance(fallbackBalance);
+          }
+        }
       } catch (error) {
         console.error('❌ Error fetching real balance:', error);
-        // Fallback to Firestore balance if API fails
-        const fallbackBalance = tarjetaDigital.saldo || tarjetaDigital.balance || 0;
-        console.log('⚠️ Using fallback balance from Firestore:', fallbackBalance);
+        // Fallback to stored balance if API fails
+        const fallbackBalance = tarjetaDigital?.saldo || tarjetaDigital?.balance || 0;
+        console.log('⚠️ Using fallback balance from tarjetaDigital:', fallbackBalance);
         setDebitBalance(fallbackBalance);
       } finally {
         setLoading(false);
@@ -62,7 +85,7 @@ const TransferAmountScreen = ({ navigation, route }) => {
     };
 
     fetchRealBalance();
-  }, [tarjetaDigital?.nessieAccountId]);
+  }, [tarjetaDigital]);
 
   const getInitials = (name) => {
     if (!name) return '?';
@@ -103,46 +126,93 @@ const TransferAmountScreen = ({ navigation, route }) => {
       console.log('💰 Balance ANTES del transfer:', previousBalance);
       console.log('💰 Monto a transferir:', amt);
       console.log('💰 Balance ESPERADO después:', expectedNew);
-      console.log('📋 TarjetaDigital.nessieAccountId:', tarjetaDigital?.nessieAccountId);
-      console.log('📋 Contact.contactNessieAccountId:', contact?.contactNessieAccountId);
+      console.log('📋 TarjetaDigital accountId:', tarjetaDigital?.accountId);
+      console.log('📋 TarjetaDigital nessieAccountId:', tarjetaDigital?.nessieAccountId);
 
-      // Get the Nessie account ID from tarjetaDigital
-      const payerNessieId = tarjetaDigital?.nessieAccountId || tarjetaDigital?._id;
-      
-      if (!payerNessieId) {
+      // 🔥 Ahora usamos contactAccountId (ID de Firestore) en lugar de contactNessieAccountId
+      const recipientAccountId = contact?.contactAccountId || contact?.contactNessieAccountId;
+      console.log('📋 Contact account ID:', recipientAccountId);
+
+      // 🔥 Usar accountId de Firebase si nessieAccountId es null
+      const payerAccountId = tarjetaDigital?.nessieAccountId || tarjetaDigital?.accountId;
+      console.log('📋 Payer account ID:', payerAccountId);
+
+      if (!payerAccountId) {
         throw new Error('Debit account ID not found. Please refresh and try again.');
       }
 
-      if (!contact?.contactNessieAccountId) {
+      if (!recipientAccountId) {
         throw new Error('Recipient account ID not found. Please try again.');
       }
 
       // Update contact last used
       await updateContactLastUsed(user.uid, contact.id);
 
-      // Execute transfer using Nessie API
-      console.log('🚀 Creating transfer with:', {
-        from: payerNessieId,
-        to: contact.contactNessieAccountId,
-        amount: amt
-      });
+      // 🔥 Determinar si usar Firebase o Nessie para la transferencia
+      let result;
+      const shouldUseFirebase = !tarjetaDigital?.nessieAccountId && tarjetaDigital?.accountId;
 
-      const result = await createTransfer(
-        payerNessieId,
-        contact.contactNessieAccountId,
-        amt,
-        'balance',
-        `Transfer to ${contact.contactName}`
-      );
+      if (shouldUseFirebase) {
+        // 🔥 Usar Firebase para cuentas nuevas
+        console.log('🔥 Creating Firebase transfer:', {
+          from: payerAccountId,
+          to: recipientAccountId,
+          amount: amt
+        });
+
+        result = await createFirebaseTransfer(
+          payerAccountId,
+          recipientAccountId,
+          amt,
+          'balance',
+          `Transfer to ${contact.contactName}`
+        );
+      } else {
+        // 🔄 Usar Nessie para cuentas antiguas
+        console.log('🌐 Creating Nessie transfer:', {
+          from: payerAccountId,
+          to: recipientAccountId,
+          amount: amt
+        });
+
+        result = await createTransfer(
+          payerAccountId,
+          recipientAccountId,
+          amt,
+          'balance',
+          `Transfer to ${contact.contactName}`
+        );
+      }
 
       console.log('✅ Transfer created:', result);
 
-      // Emit balance update event
-      EventBus.emit('balance:updated', {
-        accountId: result.payerAccount.id,
-        newBalance: expectedNew,
-        timestamp: Date.now(),
-      });
+      // 🔥 Emitir eventos de balance actualizado
+      if (shouldUseFirebase) {
+        console.log('🔥 Emitting balance update events...');
+        console.log('💰 Payer balance event:', { accountId: payerAccountId, newBalance: expectedNew });
+        console.log('💰 Payee balance event:', { accountId: recipientAccountId, newBalance: result.payeeAccount.balance });
+
+        // Para Firebase transfers, emitir eventos para ambas cuentas
+        EventBus.emit('balance:updated', {
+          accountId: payerAccountId,
+          newBalance: expectedNew,
+          timestamp: Date.now(),
+        });
+
+        // También emitir para la cuenta receptora
+        EventBus.emit('balance:updated', {
+          accountId: recipientAccountId,
+          newBalance: result.payeeAccount.balance,
+          timestamp: Date.now(),
+        });
+      } else {
+        // Para Nessie transfers, usar el evento original
+        EventBus.emit('balance:updated', {
+          accountId: result.payerAccount.id,
+          newBalance: expectedNew,
+          timestamp: Date.now(),
+        });
+      }
 
       // Navigate to confirmation screen
       navigation.replace('TransferConfirmation', {

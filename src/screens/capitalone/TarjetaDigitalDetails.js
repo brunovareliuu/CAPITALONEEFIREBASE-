@@ -16,7 +16,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useAuth } from '../../context/AuthContext';
 import { colors } from '../../styles/colors';
 import { getCardType, getCardColors, getCardTypeLabel, shouldShowTypeBadge } from '../../utils/cardUtils';
-import { getAccountBalance, getAccountPurchases, getAccountDeposits, getAccountTransfers, getAllAccountTransactions } from '../../services/nessieService';
+import { getAccountById, getAccountTransactions } from '../../services/firestoreService';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -292,6 +292,7 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
   const [movements, setMovements] = useState([]);
   const [accountBalance, setAccountBalance] = useState(0);
   const [optimisticTransactions, setOptimisticTransactions] = useState([]); // Transacciones optimistas pendientes
+  const [activeFilter, setActiveFilter] = useState('todos'); // Filtro activo para transacciones
 
   const cardType = getCardType(tarjetaDigital);
   const cardColors = getCardColors(tarjetaDigital);
@@ -319,20 +320,30 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
     setOptimisticTransactions([]);
   };
 
-  // Load account balance from Nessie API
+  // Load account balance from Firebase only
   useEffect(() => {
     const loadBalance = async () => {
-      if (tarjetaDigital?.nessieAccountId) {
+      if (tarjetaDigital?.accountId) {
+        // Use Firebase for all accounts
         try {
-          const balance = await getAccountBalance(tarjetaDigital.nessieAccountId);
-          setAccountBalance(balance);
+          console.log('🔥 Loading balance from Firebase for account:', tarjetaDigital.accountId);
+          const accountDoc = await getAccountById(tarjetaDigital.accountId);
+          if (accountDoc.exists()) {
+            const accountData = accountDoc.data();
+            const balance = accountData.balance || 0;
+            console.log('💰 Account balance from Firebase:', balance);
+            setAccountBalance(balance);
+          } else {
+            console.log('❌ Account not found in Firebase, using stored balance');
+            setAccountBalance(tarjetaDigital?.saldo || 0);
+          }
         } catch (error) {
-          console.error('Error loading balance from Nessie API:', error);
-          // Fallback to stored balance
-          setAccountBalance(tarjetaDigital.saldo || 0);
+          console.error('❌ Error loading balance from Firebase:', error);
+          setAccountBalance(tarjetaDigital?.saldo || 0);
         }
       } else {
-        // Fallback to stored balance if no nessieAccountId
+        // Fallback to stored balance if no account ID
+        console.log('⚠️ No accountId found, using stored balance');
         setAccountBalance(tarjetaDigital?.saldo || 0);
       }
     };
@@ -342,109 +353,74 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
     }
   }, [tarjetaDigital]);
 
-  // Load real transactions from Nessie API
-  // Initialize movements data - CARGAR DESDE EL API
+  // Load transactions from Firebase only
   useEffect(() => {
-    const loadTransactions = async () => {
-      // For credit cards, don't load transactions from Nessie as they work differently
+    let unsubscribe = () => {};
+
+    const loadTransactions = () => {
+      // For credit cards, don't load transactions as they work differently
       if (tarjetaDigital?.tipo === 'Credit Card') {
         console.log('💳 Credit card detected - skipping transaction loading');
         setMovements([]);
         return;
       }
 
-      if (tarjetaDigital?.nessieAccountId) {
-        try {
-          console.log('📥 INITIAL LOAD - Loading transactions for card:', tarjetaDigital.nessieAccountId);
-          // Get purchases, deposits and transfers
-          const [purchases, deposits, transfers] = await Promise.all([
-            getAccountPurchases(tarjetaDigital.nessieAccountId),
-            getAccountDeposits(tarjetaDigital.nessieAccountId),
-            getAccountTransfers(tarjetaDigital.nessieAccountId)
-          ]);
+      // Use Firebase for all accounts (forgetting Nessie completely)
+      if (tarjetaDigital?.accountId) {
+        console.log('🔥 Loading transactions from Firebase for account:', tarjetaDigital.accountId);
 
-          console.log('📦 INITIAL LOAD - API Response:');
-          console.log('  🛒 Purchases:', purchases.length);
-          console.log('  💵 Deposits:', deposits.length);
-          console.log('  ✈️ Transfers:', transfers.length);
+        unsubscribe = getAccountTransactions(tarjetaDigital.accountId, user.uid, (firebaseTransactions) => {
+          console.log('📦 Firebase transactions received:', firebaseTransactions.length);
 
-          // Combine and format transactions
-          const formattedMovements = [];
+          // Convert Firebase transactions to UI format
+          const formattedMovements = firebaseTransactions.map(transaction => {
+            // Determine if this account is the sender or receiver
+            const isSender = transaction.payerAccountId === tarjetaDigital.accountId;
+            const isReceiver = transaction.payeeAccountId === tarjetaDigital.accountId;
 
-          // Format purchases (expenses)
-          purchases.forEach(purchase => {
-            console.log('🛒 INITIAL - Processing purchase:', {
-              id: purchase._id,
-              desc: purchase.description,
-              status: purchase.status,
-              amount: purchase.amount
-            });
-            formattedMovements.push({
-              id: purchase._id,
-          type: 'gasto',
-              description: purchase.description || 'Purchase',
-              amount: -Math.abs(purchase.amount), // Negative for expenses
-              date: purchase.purchase_date,
-              time: '12:00', // Nessie doesn't provide time, use default
-              category: 'Purchase',
-              icon: 'shopping-cart',
-              status: purchase.status
-            });
+            let type, description, amount, category, icon;
+
+            if (isSender) {
+              // This account sent money
+              type = 'transfer_out';
+              description = transaction.description || `Transfer to ${transaction.payeeName || 'recipient'}`;
+              amount = -Math.abs(transaction.amount); // Negative for outgoing
+              category = 'Transfer Sent';
+              icon = 'paper-plane';
+            } else if (isReceiver) {
+              // This account received money
+              type = 'transfer_in';
+              description = transaction.description || `Transfer from ${transaction.payerName || 'sender'}`;
+              amount = Math.abs(transaction.amount); // Positive for incoming
+              category = 'Transfer Received';
+              icon = 'paper-plane';
+            }
+
+            // Convert Firebase timestamp to date string
+            const transactionDate = transaction.createdAt?.toDate?.() || new Date(transaction.createdAt || Date.now());
+            const dateString = transactionDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+            const timeString = transactionDate.toTimeString().slice(0, 5); // HH:MM format
+
+            return {
+              id: transaction.id,
+              type,
+              description,
+              amount,
+              date: dateString,
+              time: timeString,
+              category,
+              icon,
+              status: transaction.status || 'completed'
+            };
           });
 
-          // Format deposits (income)
-          deposits.forEach(deposit => {
-            console.log('💵 INITIAL - Processing deposit:', deposit._id);
-            formattedMovements.push({
-              id: deposit._id,
-          type: 'ingreso',
-              description: deposit.description || 'Deposit',
-              amount: Math.abs(deposit.amount), // Positive for income
-              date: deposit.transaction_date,
-              time: '12:00', // Nessie doesn't provide time, use default
-              category: 'Deposit',
-              icon: 'dollar-sign',
-              status: deposit.status
-            });
-          });
-
-          // Format transfers
-          transfers.forEach(transfer => {
-            // Determinar correctamente si es ingreso o gasto basado en payer/payee
-            const isIncoming = tarjetaDigital.nessieAccountId === transfer.payee_id;
-            const isOutgoing = tarjetaDigital.nessieAccountId === transfer.payer_id;
-            console.log('✈️ INITIAL - Processing transfer:', {
-              id: transfer._id,
-              isIncoming,
-              isOutgoing
-            });
-            formattedMovements.push({
-              id: transfer._id,
-              type: isIncoming ? 'transfer_in' : 'transfer_out',
-              description: transfer.description || (isIncoming ? 'Money Received' : 'Money Sent'),
-              amount: isIncoming ? Math.abs(transfer.amount) : -Math.abs(transfer.amount),
-              date: transfer.transaction_date,
-              time: '12:00', // Nessie doesn't provide time, use default
-              category: 'Transfer',
-              icon: 'paper-plane',
-              status: transfer.status
-            });
-          });
-
-          // Sort by date (most recent first)
-          formattedMovements.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-          console.log('✅ INITIAL LOAD - Total formatted movements:', formattedMovements.length);
-          console.log('📋 INITIAL LOAD - All movements:', formattedMovements.map(m => ({ type: m.type, desc: m.description })));
+          console.log('✅ Firebase transactions formatted:', formattedMovements.length);
+          console.log('📋 Formatted movements:', formattedMovements.map(m => ({ type: m.type, desc: m.description, amount: m.amount })));
 
           setMovements(formattedMovements);
-        } catch (error) {
-          console.error('❌ INITIAL LOAD - Error loading transactions from Nessie API:', error);
-          // Fallback to empty array
-          setMovements([]);
-        }
+        });
       } else {
-        console.log('⚠️ No nessieAccountId found for card');
+        console.log('⚠️ No account ID found for card');
         setMovements([]);
       }
     };
@@ -452,6 +428,13 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
     if (tarjetaDigital) {
       loadTransactions();
     }
+
+    // Cleanup function
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, [tarjetaDigital]);
 
   // Refresh data when dataRefreshTrigger changes (e.g., after a purchase)
@@ -462,12 +445,16 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
     const refreshData = async () => {
       // For credit cards, only refresh balance, not transactions
       if (tarjetaDigital.tipo === 'Credit Card') {
-        if (tarjetaDigital.nessieAccountId) {
+        if (tarjetaDigital.accountId) {
           try {
-            console.log('🔄 Refreshing credit card balance...');
-            const balance = await getAccountBalance(tarjetaDigital.nessieAccountId);
-            console.log('💰 Updated credit card balance:', balance);
-            setAccountBalance(balance);
+            console.log('🔄 Refreshing credit card balance from Firebase...');
+            const accountDoc = await getAccountById(tarjetaDigital.accountId);
+            if (accountDoc.exists()) {
+              const accountData = accountDoc.data();
+              const balance = accountData.balance || 0;
+              console.log('💰 Updated credit card balance:', balance);
+              setAccountBalance(balance);
+            }
           } catch (error) {
             console.error('❌ Error refreshing credit card balance:', error);
           }
@@ -475,100 +462,24 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
         return;
       }
 
-      if (tarjetaDigital.nessieAccountId) {
+      // Refresh balance from Firebase
+      if (tarjetaDigital.accountId) {
         try {
-          console.log('🔄 Refreshing balance and transactions...');
-          
+          console.log('🔄 Refreshing balance from Firebase...');
+
           // Load updated balance
-          const balance = await getAccountBalance(tarjetaDigital.nessieAccountId);
-          console.log('💰 Updated balance:', balance);
-          setAccountBalance(balance);
+          const accountDoc = await getAccountById(tarjetaDigital.accountId);
+          if (accountDoc.exists()) {
+            const accountData = accountDoc.data();
+            const balance = accountData.balance || 0;
+            console.log('💰 Updated balance:', balance);
+            setAccountBalance(balance);
+          }
 
-          // Load updated transactions
-          const [purchases, deposits, transfers] = await Promise.all([
-            getAccountPurchases(tarjetaDigital.nessieAccountId),
-            getAccountDeposits(tarjetaDigital.nessieAccountId),
-            getAccountTransfers(tarjetaDigital.nessieAccountId)
-          ]);
-
-          console.log('📦 API Response - Purchases:', purchases.length, 'Deposits:', deposits.length, 'Transfers:', transfers.length);
-
-          // Combine and format transactions
-          const formattedMovements = [];
-
-          // Format purchases (expenses)
-          purchases.forEach(purchase => {
-            console.log('🛒 Processing purchase:', {
-              id: purchase._id,
-              desc: purchase.description,
-              status: purchase.status,
-              amount: purchase.amount,
-              date: purchase.purchase_date
-            });
-            formattedMovements.push({
-              id: purchase._id,
-              type: 'gasto',
-              description: purchase.description || 'Purchase',
-              amount: -Math.abs(purchase.amount), // Negative for expenses
-              date: purchase.purchase_date,
-              time: '12:00', // Nessie doesn't provide time, use default
-              category: 'Purchase',
-              icon: 'shopping-cart',
-              status: purchase.status
-            });
-          });
-
-          // Format deposits (income)
-          deposits.forEach(deposit => {
-            console.log('💵 Processing deposit:', deposit._id, deposit.description);
-            formattedMovements.push({
-              id: deposit._id,
-              type: 'ingreso',
-              description: deposit.description || 'Deposit',
-              amount: Math.abs(deposit.amount), // Positive for income
-              date: deposit.transaction_date,
-              time: '12:00', // Nessie doesn't provide time, use default
-              category: 'Deposit',
-              icon: 'dollar-sign',
-              status: deposit.status
-            });
-          });
-
-          // Format transfers
-          transfers.forEach(transfer => {
-            // Determinar correctamente si es ingreso o gasto basado en payer/payee
-            const isIncoming = tarjetaDigital.nessieAccountId === transfer.payee_id;
-            const isOutgoing = tarjetaDigital.nessieAccountId === transfer.payer_id;
-            console.log('✈️ Processing transfer:', {
-              id: transfer._id,
-              isIncoming,
-              isOutgoing,
-              payer: transfer.payer_id,
-              payee: transfer.payee_id,
-              myAccount: tarjetaDigital.nessieAccountId
-            });
-            formattedMovements.push({
-              id: transfer._id,
-              type: isIncoming ? 'transfer_in' : 'transfer_out',
-              description: transfer.description || (isIncoming ? 'Money Received' : 'Money Sent'),
-              amount: isIncoming ? Math.abs(transfer.amount) : -Math.abs(transfer.amount),
-              date: transfer.transaction_date,
-              time: '12:00', // Nessie doesn't provide time, use default
-              category: 'Transfer',
-              icon: 'paper-plane',
-              status: transfer.status
-            });
-          });
-
-          // Sort by date (most recent first)
-          formattedMovements.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-          console.log('✅ Total formatted movements:', formattedMovements.length);
-          console.log('📋 All movements:', formattedMovements.map(m => ({ type: m.type, desc: m.description, amount: m.amount })));
-
-          setMovements(formattedMovements);
+          // Transactions will be updated automatically by the realtime listener
+          console.log('✅ Balance refreshed from Firebase');
         } catch (error) {
-          console.error('❌ Error refreshing transactions from Nessie API:', error);
+          console.error('❌ Error refreshing from Firebase:', error);
         }
       }
     };
@@ -579,10 +490,23 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
   // Combinar movimientos reales con transacciones optimistas
   const allMovements = [...movements, ...optimisticTransactions];
 
-  // Mostrar transferencias y purchases para savings accounts
-  const filteredMovements = allMovements.filter(movement =>
-    movement.type === 'transfer_in' || movement.type === 'transfer_out' || movement.type === 'gasto'
-  );
+  // Filtrar movimientos según el filtro activo
+  const filteredMovements = allMovements.filter(movement => {
+    switch (activeFilter) {
+      case 'todos':
+        return movement.type === 'transfer_in' || movement.type === 'transfer_out' || movement.type === 'gasto' || movement.type === 'ingreso';
+      case 'purchases':
+        return movement.type === 'gasto';
+      case 'transactions':
+        return movement.type === 'transfer_in' || movement.type === 'transfer_out';
+      case 'ingresos':
+        return movement.type === 'ingreso' || movement.type === 'transfer_in';
+      case 'gastos':
+        return movement.type === 'gasto' || movement.type === 'transfer_out';
+      default:
+        return true;
+    }
+  });
 
 
   // Copiar CLABE al portapapeles

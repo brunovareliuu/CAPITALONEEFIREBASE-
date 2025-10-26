@@ -12,7 +12,6 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
@@ -430,17 +429,17 @@ const BillsScreen = ({ navigation }) => {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
           <Text style={styles.loadingText}>Loading bills...</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <StatusBar style="dark" />
 
       <StandardHeader
@@ -595,8 +594,6 @@ const BillsScreen = ({ navigation }) => {
         </View>
       </ScrollView>
 
-
-
       {/* Create Bill Modal */}
       <Modal
         visible={showCreateModal}
@@ -746,7 +743,7 @@ const BillsScreen = ({ navigation }) => {
           </TouchableOpacity>
         </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -768,7 +765,6 @@ const styles = StyleSheet.create({
   // Header styles removed - using StandardHeader
   content: {
     flex: 1,
-    paddingHorizontal: 20,
   },
   section: {
     marginBottom: 24,

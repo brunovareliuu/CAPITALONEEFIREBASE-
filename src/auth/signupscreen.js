@@ -795,7 +795,7 @@ const SignUpScreen = ({ navigation }) => {
   const handleSignUp = async () => {
     // Final validation
     if (!formData.email || !formData.password || !formData.first_name || !formData.last_name ||
-        !formData.phoneNumber || !formData.city || !formData.state || !formData.street_number || 
+        !formData.phoneNumber || !formData.city || !formData.state || !formData.street_number ||
         !formData.street_name || !formData.zip) {
       setError('Please complete all required fields');
       return;
@@ -803,6 +803,9 @@ const SignUpScreen = ({ navigation }) => {
 
     setLoading(true);
     setError('');
+
+    let nessieCustomerId = null;
+    let nessieStatus = 'pending'; // pending, completed, failed
 
     try {
       // Step 1: Create user in Firebase Auth FIRST to get UID
@@ -816,21 +819,30 @@ const SignUpScreen = ({ navigation }) => {
       const firebaseUID = userCredential.user.uid;
       console.log('Firebase user created with UID:', firebaseUID);
 
-      // Step 2: Create customer in Nessie API with Firebase UID as reference
-      console.log('Creating customer in Nessie API...');
-      const nessieCustomer = await createNessieCustomer({
-        first_name: formData.first_name,
-        last_name: formData.last_name,
-        address: {
-          street_number: formData.street_number,
-          street_name: formData.street_name,
-          city: formData.city,
-          state: formData.state,
-          zip: formData.zip,
-        },
-      });
+      // Step 2: Try to create customer in Nessie API (but don't fail if it doesn't work)
+      console.log('Attempting to create customer in Nessie API...');
+      try {
+        const nessieCustomer = await createNessieCustomer({
+          first_name: formData.first_name,
+          last_name: formData.last_name,
+          address: {
+            street_number: formData.street_number,
+            street_name: formData.street_name,
+            city: formData.city,
+            state: formData.state,
+            zip: formData.zip,
+          },
+        });
 
-      console.log('Nessie customer created with ID:', nessieCustomer.objectCreated._id);
+        nessieCustomerId = nessieCustomer.objectCreated._id;
+        nessieStatus = 'completed';
+        console.log('Nessie customer created with ID:', nessieCustomerId);
+
+      } catch (nessieError) {
+        console.warn('Nessie API failed, but continuing with Firebase registration:', nessieError.message);
+        nessieStatus = 'failed';
+        // No asignamos nessieCustomerId, quedará null
+      }
 
       // Step 3: Update Firebase user profile
       const displayName = `${formData.first_name} ${formData.last_name}`;
@@ -838,26 +850,61 @@ const SignUpScreen = ({ navigation }) => {
         displayName: displayName,
       });
 
-      // Step 4: Save user data to Firestore using Firebase UID as primary key
-      console.log('Saving user profile to Firestore...');
-      // Format phone number with country code
+      // Step 4: Save user data to Firestore - SIEMPRE SE GUARDA, AUNQUE NESSIE FALLE
+      console.log('Saving complete user profile to Firestore...');
       const formattedPhoneNumber = formData.countryCode.dialCode.replace('+', '') + formData.phoneNumber;
 
       await createUserProfile(firebaseUID, {
+        // === CAMPOS QUE GUARDABA FIREBASE ===
         email: formData.email,
         password: formData.password, // Store password for reference
-        uid: firebaseUID, // Firebase UID
+        uid: firebaseUID, // Firebase UID (identificador principal)
         phoneNumber: formattedPhoneNumber, // Phone number with country code
-        nessieCustomerId: nessieCustomer.objectCreated._id, // Nessie API response ID
+        nessieCustomerId: nessieCustomerId, // Puede ser null si Nessie falló
         currency: formData.currency,
         completedAccountQuiz: false, // Usuario debe completar el quiz de cuenta
         createdAt: new Date(),
+
+        // === CAMPOS QUE GUARDABA NESSIE (información del customer) ===
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        displayName: displayName, // Nombre completo para display
+
+        // Dirección completa (como la guardaba Nessie)
+        address: {
+          street_number: formData.street_number,
+          street_name: formData.street_name,
+          city: formData.city,
+          state: formData.state,
+          zip: formData.zip,
+        },
+
+        // Información adicional del país para el teléfono
+        countryCode: formData.countryCode,
+
+        // Estado de la cuenta
+        isActive: true,
+        accountType: 'personal',
+        lastLoginAt: new Date(),
+
+        // Estado de Nessie (nuevo campo para saber si está conectado)
+        nessieStatus: nessieStatus, // 'completed', 'failed', o 'pending'
+
+        // Metadata del registro
+        registrationMethod: 'email_password',
+        registrationCompleted: true,
       });
 
-      console.log('User registration completed successfully');
+      console.log('User registration completed successfully in Firebase');
       console.log('Firebase UID:', firebaseUID);
-      console.log('Nessie Customer ID:', nessieCustomer.objectCreated._id);
+      console.log('Nessie Status:', nessieStatus);
+      if (nessieCustomerId) {
+        console.log('Nessie Customer ID:', nessieCustomerId);
+      } else {
+        console.log('Nessie Customer ID: Not available (Nessie API failed)');
+      }
       console.log('Phone Number:', formattedPhoneNumber);
+      console.log('Complete profile saved to Firestore');
 
       // Send welcome message via WhatsApp
       try {
@@ -872,15 +919,14 @@ const SignUpScreen = ({ navigation }) => {
       }
 
       // Step 5: Navigation will be handled automatically by AppNavigation
-      // No manual navigation needed - AppNavigation will detect the user has no Nessie account
+      // Si Nessie falló, AppNavigation debería manejar que el usuario no tiene cuenta bancaria todavía
 
     } catch (error) {
       console.error('Registration error:', error);
 
       // Handle different types of errors
-      if (error.message && error.message.includes('Nessie')) {
-        setError('Failed to create account in banking system. Please try again.');
-      } else if (error.code) {
+      if (error.code) {
+        // Firebase Auth errors
         setError(getErrorMessage(error.code));
       } else {
         setError('Failed to create account. Please check your information and try again.');

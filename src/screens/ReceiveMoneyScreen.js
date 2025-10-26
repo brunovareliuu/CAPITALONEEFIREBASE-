@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,34 +8,84 @@ import {
   Alert,
   Clipboard,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import { getUserProfile } from '../services/firestoreService';
 import StandardHeader from '../components/StandardHeader';
 
 const ReceiveMoneyScreen = ({ navigation, route }) => {
   const { user } = useAuth();
   const { tarjetaDigital } = route.params || {};
-  
+
+  // Estados para datos del usuario y cuenta
+  const [userProfile, setUserProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showDetails, setShowDetails] = useState(false);
+
+  // Determinar tipo de cuenta y información
+  const isSavingsAccount = tarjetaDigital?.accountType === 'savings' ||
+                          tarjetaDigital?.type === 'Savings' ||
+                          tarjetaDigital?.account_type === 'savings';
+
+  const accountDisplayName = tarjetaDigital?.nickname || 'Account';
+
   // CLABE is the account_number from tarjetaDigital (16 digits)
-  // This is the same as numeroTarjeta or accountNumber field
-  const clabeNumber = tarjetaDigital?.numeroTarjeta || 
-                      tarjetaDigital?.accountNumber || 
-                      tarjetaDigital?.account_number || 
+  const clabeNumber = tarjetaDigital?.numeroTarjeta ||
+                      tarjetaDigital?.accountNumber ||
+                      tarjetaDigital?.account_number ||
                       '0000000000000000';
-  
-  console.log('📋 ReceiveMoneyScreen - tarjetaDigital:', tarjetaDigital);
-  console.log('💳 CLABE Number:', clabeNumber);
-  
-  const userData = {
-    name: user?.displayName || 'User Name',
-    clabe: clabeNumber,
-    depositCode: '5101258923268037',
-    entity: 'Capital One Mexico',
+
+  // Generar código de depósito único basado en el ID de la cuenta
+  const generateDepositCode = (accountId) => {
+    if (!accountId) return '0000000000000000';
+    // Tomar los últimos 16 caracteres del ID y asegurar que sea numérico
+    const base = accountId.replace(/\D/g, '').slice(-16);
+    return base.padStart(16, '0');
   };
 
-  const [showDetails, setShowDetails] = useState(false);
+  const depositCode = tarjetaDigital?.id ? generateDepositCode(tarjetaDigital.id) : '0000000000000000';
+
+  console.log('📋 ReceiveMoneyScreen - tarjetaDigital:', tarjetaDigital);
+  console.log('💳 CLABE Number:', clabeNumber);
+  console.log('🔢 Deposit Code:', depositCode);
+  console.log('💰 Account Type:', isSavingsAccount ? 'Savings' : 'Debit');
+
+  // Cargar perfil de usuario desde Firestore
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      try {
+        if (user?.uid) {
+          const profileDoc = await getUserProfile(user.uid);
+          if (profileDoc.exists()) {
+            const profileData = profileDoc.data();
+            setUserProfile(profileData);
+            console.log('✅ User profile loaded:', profileData);
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error loading user profile:', error);
+        Alert.alert('Error', 'Could not load user information');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadUserProfile();
+  }, [user]);
+
+  // Datos del usuario para mostrar
+  const userData = {
+    name: userProfile?.displayName ||
+          userProfile?.first_name && userProfile?.last_name ?
+          `${userProfile.first_name} ${userProfile.last_name}` :
+          user?.displayName || 'User Name',
+    clabe: clabeNumber,
+    depositCode: depositCode,
+    entity: 'Capital One Mexico',
+  };
 
   const copyToClipboard = (text, label) => {
     Clipboard.setString(text);
@@ -45,7 +95,7 @@ const ReceiveMoneyScreen = ({ navigation, route }) => {
   const shareData = async () => {
     const accountText = isSavingsAccount
       ? `my ${accountDisplayName} (Savings Account)`
-      : 'my account';
+      : 'my Capital One Debit Account';
 
     const message = `Hello!
 
@@ -67,9 +117,49 @@ To deposit at stores like OXXO, Soriana, Kiosko, Chedraui, Farmacias del Ahorro 
     }
   };
 
+  // Mostrar loading mientras carga la información del usuario
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <StandardHeader
+          onBack={() => navigation.goBack()}
+        />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#00487A" />
+          <Text style={styles.loadingText}>Loading account information...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Validar que tengamos la información necesaria
+  if (!tarjetaDigital) {
+    return (
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <StandardHeader
+          onBack={() => navigation.goBack()}
+        />
+        <View style={styles.errorContainer}>
+          <Icon name="exclamation-triangle" size={48} color="#FF9500" />
+          <Text style={styles.errorTitle}>Account Not Available</Text>
+          <Text style={styles.errorText}>
+            No account information found. Please try again.
+          </Text>
+          <TouchableOpacity
+            style={styles.errorButton}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.errorButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
-      <StandardHeader 
+      <StandardHeader
         onBack={() => navigation.goBack()}
       />
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -92,7 +182,7 @@ To deposit at stores like OXXO, Soriana, Kiosko, Chedraui, Farmacias del Ahorro 
               <View style={styles.clabeLeftColumn}>
                 {/* Top Row - CLABE Label */}
                 <View style={styles.clabeLabelRow}>
-                  <Text style={styles.clabeLabel}>CLABE</Text>
+                  <Text style={styles.clabeLabel}>ACCOUNT NUMBER</Text>
                 </View>
                 {/* Bottom Row - CLABE Number */}
                 <View style={styles.clabeNumberRow}>
@@ -142,7 +232,7 @@ To deposit at stores like OXXO, Soriana, Kiosko, Chedraui, Farmacias del Ahorro 
             {/* CLABE */}
             <View style={styles.detailItem}>
               <View style={styles.detailLeft}>
-                <Text style={styles.detailLabel}>CLABE</Text>
+                <Text style={styles.detailLabel}>ACCOUNT NUMBER</Text>
                 <Text style={styles.detailValue}>{userData.clabe}</Text>
               </View>
               <TouchableOpacity 
@@ -357,6 +447,51 @@ const styles = StyleSheet.create({
     color: '#666',
     lineHeight: 20,
     flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '500',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 22,
+  },
+  errorButton: {
+    backgroundColor: '#00487A',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    alignItems: 'center',
+  },
+  errorButtonText: {
+    fontSize: 16,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
 });
 

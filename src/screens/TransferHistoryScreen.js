@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { getUserProfile } from '../services/firestoreService';
+import { getUserProfile, getUserTransactions } from '../services/firestoreService';
 import { getCustomerAccounts, getAccountTransfers } from '../services/nessieService';
 import StandardHeader from '../components/StandardHeader';
 
@@ -22,6 +22,62 @@ const TransferHistoryScreen = ({ navigation }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('all'); // all, sent, received
 
+  // 🔥 Nueva versión usando Firebase (reemplaza Nessie)
+  const loadTransfersWithFirebase = async () => {
+    try {
+      if (!user) return;
+
+      console.log('🔥 Cargando transacciones desde Firebase...');
+
+      // Obtener transacciones del usuario desde Firebase
+      const unsubscribe = getUserTransactions(user.uid, (transactions) => {
+        console.log('✅ Transacciones obtenidas:', transactions.length);
+
+        // Formatear las transacciones para compatibilidad con la UI existente
+        const formattedTransfers = transactions.map((transaction, index) => ({
+          id: transaction.id,
+          _id: transaction.id, // Para compatibilidad
+          amount: transaction.amount,
+          medium: transaction.medium,
+          description: transaction.description,
+          transaction_date: transaction.transactionDate,
+          status: transaction.status,
+          type: transaction.type === 'transfer_out' ? 'p2p' : transaction.type,
+
+          // Información del pagador (para mostrar como "from")
+          payer_id: transaction.payerAccountId,
+          payerAccount: {
+            nickname: transaction.payerName
+          },
+
+          // Información del receptor (para mostrar como "to")
+          payee_id: transaction.payeeAccountId,
+          payeeAccount: {
+            nickname: transaction.payeeName
+          },
+
+          // Balances
+          previousBalance: transaction.previousBalance,
+          newBalance: transaction.newBalance,
+
+          // Metadata
+          createdAt: transaction.createdAt,
+        }));
+
+        setTransfers(formattedTransfers);
+        setLoading(false);
+      });
+
+      return unsubscribe;
+
+    } catch (error) {
+      console.error('❌ Error loading transfers:', error);
+      setTransfers([]);
+      setLoading(false);
+    }
+  };
+
+  // 🔄 Versión original usando Nessie (mantener por compatibilidad)
   const loadTransfers = async () => {
     try {
       if (!user) return;
@@ -55,7 +111,7 @@ const TransferHistoryScreen = ({ navigation }) => {
       );
 
       const allTransfersArrays = await Promise.all(allTransfersPromises);
-      
+
       // 4. Combinar y formatear todas las transferencias
       const allTransfers = allTransfersArrays
         .flat()
@@ -80,12 +136,12 @@ const TransferHistoryScreen = ({ navigation }) => {
   };
 
   useEffect(() => {
-    loadTransfers();
+    loadTransfersWithFirebase(); // 🔥 Usar Firebase
   }, [user]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadTransfers();
+    await loadTransfersWithFirebase();
     setRefreshing(false);
   };
 

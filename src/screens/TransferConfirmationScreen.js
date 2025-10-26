@@ -249,6 +249,7 @@ const TransferConfirmationScreen = ({ navigation, route }) => {
             <Icon name="history" size={16} color="#666" style={{ marginRight: 6 }} />
             <Text style={styles.textButtonText}>View Transfer History</Text>
           </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -405,8 +406,9 @@ const styles = StyleSheet.create({
     color: '#34C759',
   },
   actions: {
-    width: '100%',
+    width: '80%',
     gap: 12,
+    alignSelf: 'center',
   },
   primaryButton: {
     flexDirection: 'row',

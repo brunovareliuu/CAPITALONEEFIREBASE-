@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { getUserContacts, searchContactsByQuery, getContactByCLABE } from '../services/firestoreService';
+import { getUserContacts, searchContactsByQuery, getContactByCLABE, findAccountByNumber } from '../services/firestoreService';
 import { validateAccountExists, getAccountById } from '../services/nessieService';
 import StandardHeader from '../components/StandardHeader';
 import { useFocusEffect } from '@react-navigation/native';
@@ -93,19 +93,21 @@ const TransferContactSearchScreen = ({ navigation, route }) => {
         return;
       }
 
-      // Validate against Nessie API
-      const validation = await validateAccountExists(clabe);
-      
+      // 🔥 Buscar cuenta en Firestore por accountNumber, tipo "Checking" y userId específico
+      console.log('🔥 Searching account in Firestore by number and userId...');
+      const validation = await findAccountByNumber(clabe, "Qu0axCYo4ic8KktP26B0YvoQ7Qy2");
+
       if (validation.exists) {
-        setClabeValidation({ 
-          valid: true, 
-          nessieAccountId: validation.accountData.id,
+        setClabeValidation({
+          valid: true,
+          accountId: validation.accountData.id, // 🔥 Ahora es el ID de Firestore
+          nessieAccountId: validation.accountData.id, // Mantener compatibilidad
           clabe: clabe
         });
       } else {
-        setClabeValidation({ 
-          valid: false, 
-          error: 'Account not found' 
+        setClabeValidation({
+          valid: false,
+          error: validation.error || 'Account not found'
         });
       }
     } catch (error) {
@@ -122,10 +124,10 @@ const TransferContactSearchScreen = ({ navigation, route }) => {
   const handleCreateContact = () => {
     if (clabeValidation?.valid) {
       Keyboard.dismiss();
-      navigation.navigate('TransferAddContact', { 
+      navigation.navigate('TransferAddContact', {
         tarjetaDigital,
         prefilledCLABE: clabeValidation.clabe,
-        prefilledNessieAccountId: clabeValidation.nessieAccountId
+        prefilledNessieAccountId: clabeValidation.accountId // 🔥 Ahora es accountId
       });
     }
   };
