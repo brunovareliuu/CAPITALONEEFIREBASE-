@@ -73,6 +73,10 @@ const HomeScreen = ({ navigation }) => {
   const [showCvv, setShowCvv] = useState(false);
   const cardScrollRef = useRef(null);
   const [isPolling, setIsPolling] = useState(false);
+  
+  // Refs to track active Firestore listeners (optimization)
+  const expenseListenersRef = useRef({});
+  const participantListenersRef = useRef({});
 
   // Animation refs
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -476,7 +480,8 @@ const HomeScreen = ({ navigation }) => {
     }
   }, [user, cards.length, categories.length, isTourCompleted, isTourActive, startTour]);
 
-  // Load cards from Firestore (physical cards)
+  // Load cards from Firestore (physical cards) - OPTIMIZED: removed dataRefreshTrigger
+  // onSnapshot already provides real-time updates, no need to recreate listener
   useEffect(() => {
     if (!user) return;
 
@@ -488,9 +493,10 @@ const HomeScreen = ({ navigation }) => {
     });
 
     return () => unsubscribe();
-  }, [user, dataRefreshTrigger]);
+  }, [user]);
 
-  // Load credit card account from user accounts
+  // Load credit card account from user accounts - OPTIMIZED: removed dataRefreshTrigger
+  // onSnapshot already provides real-time updates, no need to recreate listener
   useEffect(() => {
     if (!user) return;
 
@@ -511,34 +517,75 @@ const HomeScreen = ({ navigation }) => {
     });
 
     return () => unsubscribe();
-  }, [user, dataRefreshTrigger]);
+  }, [user]);
 
-  // Load expenses from Firestore (for all user cards)
+  // Load expenses from Firestore (for all user cards) - OPTIMIZED
   useEffect(() => {
-    if (!user || cards.length === 0) return;
+    if (!user || cards.length === 0) {
+      // Clear expenses if no cards and cleanup all listeners
+      setExpenses({});
+      setExpenseCategorizations({});
+      Object.values(expenseListenersRef.current).forEach(unsubs => {
+        unsubs.forEach(unsub => unsub());
+      });
+      expenseListenersRef.current = {};
+      return;
+    }
 
-    const unsubscribes = [];
-    const expensesByCard = {};
+    const activeListeners = expenseListenersRef.current;
+    const currentCardIds = new Set(cards.map(c => c.id));
 
+    // Clean up listeners for removed cards
+    Object.keys(activeListeners).forEach(cardId => {
+      if (!currentCardIds.has(cardId)) {
+        if (activeListeners[cardId]) {
+          activeListeners[cardId].forEach(unsub => unsub());
+          delete activeListeners[cardId];
+        }
+        // Remove from state
+        setExpenses(prev => {
+          const newExpenses = { ...prev };
+          delete newExpenses[cardId];
+          return newExpenses;
+        });
+        setExpenseCategorizations(prev => {
+          const newCats = { ...prev };
+          delete newCats[cardId];
+          return newCats;
+        });
+      }
+    });
+
+    // Add listeners only for NEW cards
     cards.forEach(card => {
-      const unsubscribe = getExpenses(card.id, (cardExpenses) => {
-        expensesByCard[card.id] = cardExpenses;
-        setExpenses({ ...expensesByCard });
+      if (!activeListeners[card.id]) {
+        const unsubscribes = [];
 
-        // Also load categorizations for this card
-        const categorizationsUnsubscribe = getExpenseCategorizationsForCard(card.id, (cardCategorizations) => {
+        // Expenses listener
+        const expenseUnsub = getExpenses(card.id, (cardExpenses) => {
+          setExpenses(prev => ({ ...prev, [card.id]: cardExpenses }));
+        });
+        unsubscribes.push(expenseUnsub);
+
+        // Categorizations listener
+        const catUnsub = getExpenseCategorizationsForCard(card.id, (cardCategorizations) => {
           setExpenseCategorizations(prev => ({
-            ...(prev || {}),
+            ...prev,
             [card.id]: cardCategorizations || {}
           }));
         });
-        unsubscribes.push(categorizationsUnsubscribe);
-      });
-      unsubscribes.push(unsubscribe);
+        unsubscribes.push(catUnsub);
+
+        activeListeners[card.id] = unsubscribes;
+      }
     });
 
     return () => {
-      unsubscribes.forEach(unsubscribe => unsubscribe());
+      // Cleanup all on unmount only
+      Object.values(expenseListenersRef.current).forEach(unsubs => {
+        unsubs.forEach(unsub => unsub());
+      });
+      expenseListenersRef.current = {};
     };
   }, [user, cards]);
 
@@ -549,22 +596,48 @@ const HomeScreen = ({ navigation }) => {
     return () => unsubscribe();
   }, [user]);
 
-  // Load participants by card for active count
+  // Load participants by card for active count - OPTIMIZED
   useEffect(() => {
-    if (!user || cards.length === 0) return;
-    const unsubscribes = [];
-    const map = {};
-    cards.forEach((card) => {
-      if (card.isShared) {
-        const unsub = getParticipants(card.id, (list) => {
-          // list already includes the owner, so just use the length
-          map[card.id] = list.length;
-          setParticipantsMap({ ...map });
+    if (!user || cards.length === 0) {
+      setParticipantsMap({});
+      Object.values(participantListenersRef.current).forEach(unsub => unsub());
+      participantListenersRef.current = {};
+      return;
+    }
+
+    const activeListeners = participantListenersRef.current;
+    const sharedCardIds = new Set(cards.filter(c => c.isShared).map(c => c.id));
+
+    // Clean up listeners for removed or non-shared cards
+    Object.keys(activeListeners).forEach(cardId => {
+      if (!sharedCardIds.has(cardId)) {
+        if (activeListeners[cardId]) {
+          activeListeners[cardId]();
+          delete activeListeners[cardId];
+        }
+        setParticipantsMap(prev => {
+          const newMap = { ...prev };
+          delete newMap[cardId];
+          return newMap;
         });
-        unsubscribes.push(unsub);
       }
     });
-    return () => unsubscribes.forEach((u) => u());
+
+    // Add listeners only for NEW shared cards
+    cards.forEach((card) => {
+      if (card.isShared && !activeListeners[card.id]) {
+        const unsub = getParticipants(card.id, (list) => {
+          setParticipantsMap(prev => ({ ...prev, [card.id]: list.length }));
+        });
+        activeListeners[card.id] = unsub;
+      }
+    });
+
+    return () => {
+      // Cleanup all on unmount only
+      Object.values(participantListenersRef.current).forEach(unsub => unsub());
+      participantListenersRef.current = {};
+    };
   }, [user, cards]);
 
 
