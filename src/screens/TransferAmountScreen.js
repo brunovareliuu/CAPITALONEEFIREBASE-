@@ -221,6 +221,42 @@ const TransferAmountScreen = ({ navigation, route }) => {
           console.error('❌ Error creating recipient transaction:', recipientTxError);
           // No fallar por esto
         }
+
+        // 📱 Enviar notificación de WhatsApp al receptor
+        try {
+          console.log('📱 Sending WhatsApp notification to receiver...');
+          
+          const { sendDepositNotification } = require('../services/whatsappService');
+          
+          // Obtener perfil del receptor para su teléfono
+          const recipientProfile = await getUserProfile(recipientUserId);
+          
+          if (recipientProfile.exists()) {
+            const recipientData = recipientProfile.data();
+            const recipientPhone = recipientData.phoneNumber;
+            
+            // Obtener nombre del remitente (usuario actual)
+            const payerProfile = await getUserProfile(user.uid);
+            let payerName = 'Usuario';
+            
+            if (payerProfile.exists()) {
+              const payerData = payerProfile.data();
+              payerName = payerData.displayName || payerData.first_name || 'Usuario';
+            }
+            
+            if (recipientPhone) {
+              await sendDepositNotification(recipientPhone, payerName);
+              console.log('✅ WhatsApp notification sent to receiver');
+            } else {
+              console.warn('⚠️ Receiver has no phone number, skipping WhatsApp notification');
+            }
+          } else {
+            console.warn('⚠️ Receiver profile not found, skipping WhatsApp notification');
+          }
+        } catch (whatsappError) {
+          // No fallar la transferencia si WhatsApp falla
+          console.error('❌ WhatsApp notification failed (non-critical):', whatsappError.message);
+        }
       }
 
       // 6. Crear resultado compatible
