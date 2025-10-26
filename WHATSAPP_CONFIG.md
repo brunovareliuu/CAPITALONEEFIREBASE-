@@ -73,13 +73,14 @@ Cuando un usuario se registra, recibirá este mensaje:
 └─────────────────────────────────────────────────┘
 ```
 
-### 2. Template: `nuevo_deposito_en_tu_cuenta`
+### 2. Template: `nuevo_depsito_en_tu_cuenta`
 - **Estado**: APPROVED ✅
 - **Idioma**: `es_ES` (Español)
 - **Categoría**: UTILITY
 - **Trigger**: Al recibir una transferencia de dinero
 - **Variables**:
   - `{{1}}`: Nombre del remitente (quien envió el dinero)
+- **Nota**: El nombre tiene un typo intencional "depsito" (sin la "o")
 
 #### Contenido del Mensaje
 
