@@ -240,27 +240,13 @@ const TransferAmountScreen = ({ navigation, route }) => {
             const recipientFirstName = recipientData.first_name || recipientData.displayName?.split(' ')[0] || 'Usuario';
             
             console.log('📋 Recipient phone:', recipientPhone ? `${recipientPhone.substring(0, 3)}***` : 'NOT FOUND');
-            console.log('👤 Recipient name:', recipientFirstName);
-            
-            // Obtener nombre del remitente (usuario actual) - SOLO EL PRIMER NOMBRE
-            const payerProfile = await getUserProfile(user.uid);
-            let payerFirstName = 'Usuario';
-            
-            if (payerProfile.exists()) {
-              const payerData = payerProfile.data();
-              // Extraer SOLO el primer nombre
-              if (payerData.first_name) {
-                payerFirstName = payerData.first_name;
-              } else if (payerData.displayName) {
-                payerFirstName = payerData.displayName.split(' ')[0];
-              }
-            }
-            
-            console.log('👤 Sender (payer) first name:', payerFirstName);
+            console.log('👤 Recipient first name:', recipientFirstName);
             
             if (recipientPhone) {
               console.log('📤 Calling sendDepositNotification...');
-              const result = await sendDepositNotification(recipientPhone, payerFirstName);
+              console.log('📤 Sending recipient name to template:', recipientFirstName);
+              // ENVIAR EL NOMBRE DEL RECEPTOR (quien recibe el dinero)
+              const result = await sendDepositNotification(recipientPhone, recipientFirstName);
               
               if (result.success) {
                 console.log('✅ ¡WhatsApp notification sent successfully!');

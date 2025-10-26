@@ -383,15 +383,18 @@ exports.sendWelcomeWhatsApp = onCall(
  *
  * @param {Object} data - Datos de la petición
  * @param {string} data.phoneNumber - Número de teléfono del receptor (con código de país, sin +)
- * @param {string} data.senderName - Nombre de quien envió el dinero
+ * @param {string} data.senderName - Nombre del receptor (quien recibe el dinero)
  *
  * @return {Promise<Object>} Resultado del envío
+ *
+ * NOTA: A pesar del nombre del parámetro "senderName", se envía el NOMBRE DEL RECEPTOR
+ * para que el template diga: "Hola {Nombre del Receptor}"
  *
  * Ejemplo de uso desde el cliente:
  * ```javascript
  * const result = await sendDepositNotification({
  *   phoneNumber: "528120394578",
- *   senderName: "Juan Pérez"
+ *   senderName: "Bruno"  // Nombre del receptor
  * });
  * ```
  */
@@ -431,10 +434,10 @@ exports.sendDepositNotification = onCall(
           throw new HttpsError("invalid-argument", phoneValidation.error);
         }
 
-        // Validar nombre del remitente
+        // Validar nombre del receptor
         const nameValidation = validateClientName(senderName);
         if (!nameValidation.valid) {
-          logger.warn("⚠️ Nombre de remitente inválido:", nameValidation.error);
+          logger.warn("⚠️ Nombre de receptor inválido:", nameValidation.error);
           throw new HttpsError("invalid-argument", nameValidation.error);
         }
 
@@ -443,7 +446,7 @@ exports.sendDepositNotification = onCall(
 
         logger.info("✅ Validaciones exitosas", {
           formattedPhone: `${formattedPhone.substring(0, 3)}***`,
-          senderName: trimmedName,
+          recipientName: trimmedName,
         });
 
         // ═════════════════════════════════════════════════════════════════════
@@ -494,7 +497,7 @@ exports.sendDepositNotification = onCall(
           to: formattedPhone,
           template: "nuevo_depsito_en_tu_cuenta",
           language: "es_ES",
-          senderName: trimmedName,
+          recipientName: trimmedName,
         });
 
         // ═════════════════════════════════════════════════════════════════════
@@ -518,7 +521,7 @@ exports.sendDepositNotification = onCall(
         logger.info("═══════════════════════════════════════════════════════════");
         logger.info(`⏱️  Tiempo de ejecución: ${executionTime}ms`);
         logger.info(`📱 Teléfono: ${formattedPhone.substring(0, 3)}***`);
-        logger.info(`👤 Remitente: ${trimmedName}`);
+        logger.info(`👤 Receptor: ${trimmedName}`);
         logger.info(`📨 Message ID: ${whatsappResponse.messages?.[0]?.id || "N/A"}`);
         logger.info("═══════════════════════════════════════════════════════════");
 
@@ -526,7 +529,7 @@ exports.sendDepositNotification = onCall(
           success: true,
           messageId: whatsappResponse.messages?.[0]?.id,
           phone: formattedPhone,
-          senderName: trimmedName,
+          recipientName: trimmedName,
           executionTime: `${executionTime}ms`,
           timestamp: new Date().toISOString(),
         };
