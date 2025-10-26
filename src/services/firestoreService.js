@@ -2553,7 +2553,44 @@ export const createFirebaseTransfer = async (payerAccountId, payeeAccountId, amo
     const transactionDoc = await createTransaction(transactionData);
     console.log('✅ Transaction record created:', transactionDoc.id);
 
-    // PASO 6: Retornar resultado compatible
+    // PASO 6: Enviar notificación de WhatsApp al receptor
+    try {
+      console.log('📱 Sending WhatsApp notification to receiver...');
+      
+      // Obtener perfil del receptor para su teléfono
+      const payeeProfile = await getUserProfile(payeeData.userId);
+      
+      if (payeeProfile.exists()) {
+        const payeeProfileData = payeeProfile.data();
+        const payeePhone = payeeProfileData.phoneNumber;
+        
+        // Obtener nombre del remitente
+        const payerProfile = await getUserProfile(payerData.userId);
+        let payerName = payerData.nickname || 'Unknown';
+        
+        if (payerProfile.exists()) {
+          const payerProfileData = payerProfile.data();
+          payerName = payerProfileData.displayName || payerProfileData.first_name || payerData.nickname;
+        }
+        
+        if (payeePhone) {
+          // Importar dinámicamente el servicio de WhatsApp
+          const { sendDepositNotification } = require('./whatsappService');
+          
+          await sendDepositNotification(payeePhone, payerName);
+          console.log('✅ WhatsApp notification sent to receiver');
+        } else {
+          console.warn('⚠️ Receiver has no phone number, skipping WhatsApp notification');
+        }
+      } else {
+        console.warn('⚠️ Receiver profile not found, skipping WhatsApp notification');
+      }
+    } catch (whatsappError) {
+      // No fallar la transferencia si WhatsApp falla
+      console.error('❌ WhatsApp notification failed (non-critical):', whatsappError.message);
+    }
+
+    // PASO 7: Retornar resultado compatible
     return {
       transferId: transactionDoc.id,
       transfer: transactionData,

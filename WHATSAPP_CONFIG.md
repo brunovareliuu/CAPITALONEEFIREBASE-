@@ -6,8 +6,10 @@ Para que la integración de WhatsApp funcione correctamente, necesitas configura
 
 ### Variables Requeridas:
 
-1. **WHATSAPP_PHONE_NUMBER_ID**: `746704208532528`
+1. **WHATSAPP_PHONE_NUMBER_ID**: `746704208532528` (actualizado para template `bienvenida_capi`)
 2. **WHATSAPP_ACCESS_TOKEN**: `EAAatfRZA2uCIBPyJgesZAszfcEgVopEJ5tIeKOpV5icaZAJttoWRJ3HJ62iABSzltMvNBcMRgEKeK1vwNi2aEMBu6GSPKQ3yMTZA6WzmTLr4zARMtGZApppKQvEFtSBZCEXBGoZAHN7OQNQTbBVpAEuc0FGGjdcdTpbo1tfxw0s9ceSg4ptfygj3QOFBacm4YPi9gZDZD`
+
+> **NOTA**: Las credenciales ya están configuradas en Firebase Functions Secrets. No es necesario volver a configurarlas a menos que hayan cambiado.
 
 ### Cómo Configurar (Opción 1 - Firebase Console):
 
@@ -38,43 +40,59 @@ firebase functions:secrets:set WHATSAPP_ACCESS_TOKEN
 # Te pedirá el valor, ingresa el token completo
 ```
 
-## Detalles del Template de WhatsApp
+## Templates de WhatsApp Disponibles
 
-- **Nombre del Template**: `mensaje_bienvenida_cliente`
+### 1. Template: `bienvenida_capi`
 - **Estado**: APPROVED ✅
 - **Idioma**: `es_ES` (Español)
-- **Categoría**: MARKETING
+- **Categoría**: UTILITY
+- **Trigger**: Al crear una cuenta nueva
 - **Variables**:
-  - `{{1}}`: Nombre del cliente
+  - `{{1}}`: Nombre del cliente (primer nombre)
 
-## Contenido del Mensaje
+#### Contenido del Mensaje
 
 Cuando un usuario se registra, recibirá este mensaje:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ 📋 HEADER: Bienvenido a Capital One!           │
+│ 📋 HEADER: Bienvenid@ a Capital One!           │
 │                                                  │
-│ 👋 Hola {{1}},                                  │
-│                                                  │
-│ ¡Nos alegra darte la bienvenida a Capital One! │
+│ Hola {{1}},                                     │
+│ ¡bienvenido(a) a Capital One!                   │
 │                                                  │
 │ Soy Capi, tu asistente financiero personal.    │
-│ Estoy aquí para ayudarte a alcanzar tus metas  │
-│ y mantenerte al tanto de tu progreso           │
-│ financiero, paso a paso.                        │
-│                                                  │
-│ A partir de ahora recibirás notificaciones e   │
-│ información personalizada...                    │
-│                                                  │
-│ 💡 Consejo de hoy: cada pequeño avance cuenta. │
-│ Empecemos juntos este camino hacia tu          │
-│ libertad financiera.                            │
+│ Tu nueva cuenta ha sido creada exitosamente.   │
+│ A partir de ahora recibirás recordatorios,     │
+│ consejos y notificaciones sobre tu progreso    │
+│ financiero para ayudarte a alcanzar tus        │
+│ metas. 💼                                       │
 │                                                  │
 │ — Capi                                          │
-│ Tu asistente financiero en Capital One 💼      │
+│ Tu asistente financiero en Capital One         │
+└─────────────────────────────────────────────────┘
+```
+
+### 2. Template: `nuevo_deposito_en_tu_cuenta`
+- **Estado**: APPROVED ✅
+- **Idioma**: `es_ES` (Español)
+- **Categoría**: UTILITY
+- **Trigger**: Al recibir una transferencia de dinero
+- **Variables**:
+  - `{{1}}`: Nombre del remitente (quien envió el dinero)
+
+#### Contenido del Mensaje
+
+Cuando un usuario recibe dinero, recibirá este mensaje:
+
+```
+┌─────────────────────────────────────────────────┐
+│ 💰 ¡Nuevo depósito en tu cuenta!                │
 │                                                  │
-│ 📝 FOOTER: Capital One                          │
+│ Has recibido dinero de {{1}}                    │
+│                                                  │
+│ — Capi                                          │
+│ Tu asistente financiero en Capital One         │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -183,14 +201,18 @@ El Access Token de WhatsApp puede expirar. Si eso ocurre:
 - **WhatsApp Business API**: ~$0.05 USD por mensaje en México
 - **Total estimado**: <$0.10 USD por registro de usuario
 
+## Cloud Functions Desplegadas
+
+1. **sendWelcomeWhatsApp** - Envía mensaje de bienvenida al registrar usuario
+2. **sendDepositNotification** - Envía notificación cuando se recibe dinero
+
 ## Futuras Implementaciones
 
 Este archivo también servirá para configurar futuros templates de WhatsApp:
 
 - Recordatorio de pagos
-- Alertas de gastos
+- Alertas de gastos excedidos
 - Notificaciones de presupuestos
-- Confirmaciones de transferencias
 - etc.
 
 Todos seguirán el mismo patrón de configuración.
