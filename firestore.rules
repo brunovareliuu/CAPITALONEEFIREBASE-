@@ -58,6 +58,13 @@ service cloud.firestore {
       match /contacts/{contactId} {
         allow read, write: if isSignedIn() && request.auth.uid == userId;
       }
+
+      // Subcolección de Bills (Facturas)
+      match /bills/{billId} {
+        allow read, list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && request.auth.uid == userId;
+        allow update, delete: if isSignedIn() && request.auth.uid == userId;
+      }
     }
 
 
@@ -221,8 +228,8 @@ match /transactions/{transactionId} {
       // El usuario puede leer transacciones donde es el payer o payee
       allow read: if isSignedIn() && (
         request.auth.uid == resource.data.userId ||
-        request.auth.uid == resource.data.payerUserId ||
-        request.auth.uid == resource.data.payeeUserId
+        request.auth.uid == resource.data.fromAccountOwner ||
+        request.auth.uid == resource.data.toAccountOwner
       );
       // El usuario puede crear transacciones donde es parte de la transacción (para transferencias)
       allow create: if isSignedIn() && (
