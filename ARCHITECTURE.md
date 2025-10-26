@@ -181,16 +181,26 @@ match /transfers/{transferId} {
 - Proyecto: capitalonehackmty
 
 ### WhatsApp Business API
-- **Cloud Function**: `sendWelcomeWhatsApp`
-- **Template**: `bienvenida_capi` (APPROVED ✅)
+- **Cloud Functions**:
+  1. `sendWelcomeWhatsApp` - Bienvenida al registrarse
+  2. `sendDepositNotification` - Notificación al recibir dinero
+  
+- **Templates**:
+  1. `bienvenida_capi` (APPROVED ✅)
+     - Trigger: Al crear cuenta
+     - Variable: Nombre del usuario
+  2. `nuevo_deposito_en_tu_cuenta` (APPROVED ✅)
+     - Trigger: Al recibir transferencia
+     - Variable: Nombre del remitente
+
 - **Idioma**: es_ES
-- **Trigger**: Se envía automáticamente al crear una cuenta nueva
 - **Secrets en Firebase Functions**:
-  - `WHATSAPP_PHONE_NUMBER_ID`: 746704208532528
+  - `WHATSAPP_PHONE_NUMBER_ID`: 823229444210477
   - `WHATSAPP_ACCESS_TOKEN`: (configurado en Firebase Secrets)
 - **Integración**:
   - Cliente: `src/services/whatsappService.js`
   - Servidor: `functions/index.js`
+  - Llamadas: `signupscreen.js`, `firestoreService.js`
   - Configuración: `WHATSAPP_CONFIG.md`
 
 ## Dependencias Principales
@@ -288,10 +298,11 @@ match /transfers/{transferId} {
 4. Input de monto y validación de fondos
 5. (Opcional) Descripción
 6. Modal de confirmación
-7. Ejecución vía Nessie API
+7. Ejecución vía Firebase (createFirebaseTransfer)
 8. Guardado en Firestore
-9. TransferConfirmationScreen con balances actualizados
-10. Opciones: Nueva transferencia, Ver historial, Home
+9. **Envío automático de notificación WhatsApp al receptor** (template: `nuevo_deposito_en_tu_cuenta`)
+10. TransferConfirmationScreen con balances actualizados
+11. Opciones: Nueva transferencia, Ver historial, Home
 
 ### 3. Visualización de Historial
 1. HomeScreen → Quick Action "Historial" → TransferHistoryScreen
