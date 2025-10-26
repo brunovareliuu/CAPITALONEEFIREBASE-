@@ -79,8 +79,9 @@ Cuando un usuario se registra, recibirá este mensaje:
 - **Categoría**: UTILITY
 - **Trigger**: Al recibir una transferencia de dinero
 - **Variables**:
-  - `{{1}}`: Nombre del remitente (quien envió el dinero)
+  - `{{1}}`: **Nombre del receptor** (quien recibe el dinero)
 - **Nota**: El nombre tiene un typo intencional "depsito" (sin la "o")
+- **Importante**: Se envía el nombre del RECEPTOR (no del remitente) para personalizar el saludo
 
 #### Contenido del Mensaje
 
@@ -88,14 +89,35 @@ Cuando un usuario recibe dinero, recibirá este mensaje:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ 💰 ¡Nuevo depósito en tu cuenta!                │
+│ 💰 Hola {{1}}, ¡recibiste un depósito!         │
 │                                                  │
-│ Has recibido dinero de {{1}}                    │
+│ Se ha acreditado dinero en tu cuenta           │
 │                                                  │
 │ — Capi                                          │
 │ Tu asistente financiero en Capital One         │
 └─────────────────────────────────────────────────┘
 ```
+
+**Ejemplo**: Si el receptor se llama "Bruno", recibirá: "Hola Bruno, ¡recibiste un depósito!"
+
+#### Implementación
+
+```javascript
+// En TransferAmountScreen.js
+import { sendDepositNotification } from '../services/whatsappService';
+import { getUserProfile } from '../services/firestoreService';
+
+// IMPORTANTE: Obtener datos del RECEPTOR (quien recibe el dinero)
+const recipientProfile = await getUserProfile(recipientUserId);
+const recipientData = recipientProfile.data();
+const recipientPhone = recipientData.phoneNumber;
+const recipientFirstName = recipientData.first_name || recipientData.displayName?.split(' ')[0] || 'Usuario';
+
+// Enviar notificación con el nombre del receptor
+await sendDepositNotification(recipientPhone, recipientFirstName);
+```
+
+**Nota importante**: A pesar de que el parámetro se llama `senderName` en el código, se debe pasar el **nombre del receptor** para que el mensaje diga "Hola {Nombre}", personalizando la experiencia del usuario que recibe el dinero.
 
 ## Deploy de Firebase Functions
 
