@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { updateContactLastUsed, getAccountById, createFirebaseTransfer, updateAccountBalance, createTransaction, getUserIdByAccountId } from '../services/firestoreService';
+import { updateContactLastUsed, getAccountById, createFirebaseTransfer, updateAccountBalance, createTransaction, getUserIdByAccountId, getUserProfile, findUserByCardAccountNumber } from '../services/firestoreService';
 import EventBus from '../utils/EventBus';
 import StandardHeader from '../components/StandardHeader';
 
@@ -150,9 +150,10 @@ const TransferAmountScreen = ({ navigation, route }) => {
       const payerResult = await updateAccountBalance(payerAccountId, -amt);
       console.log('✅ Payer balance updated:', payerResult);
 
-      // 2. Encontrar al usuario del destinatario
-      console.log('🔍 Finding recipient user by account ID:', recipientAccountId);
-      const recipientUserId = await getUserIdByAccountId(recipientAccountId);
+      // 2. Encontrar al usuario del destinatario usando la CLABE (accountNumber)
+      console.log('🔍 Finding recipient user by CLABE (accountNumber):', contact.contactCLABE);
+      const { userId: recipientUserId, cardData } = await findUserByCardAccountNumber(contact.contactCLABE);
+      console.log('🔍 Recipient userId found:', recipientUserId);
 
       if (!recipientUserId) {
         console.warn('⚠️ Recipient account not found or has no user. Transfer will only affect sender.');
@@ -224,38 +225,65 @@ const TransferAmountScreen = ({ navigation, route }) => {
 
         // 📱 Enviar notificación de WhatsApp al receptor
         try {
-          console.log('📱 Sending WhatsApp notification to receiver...');
+          console.log('═══════════════════════════════════════════════════════════');
+          console.log('📱 SENDING WHATSAPP NOTIFICATION TO RECEIVER');
+          console.log('═══════════════════════════════════════════════════════════');
           
           const { sendDepositNotification } = require('../services/whatsappService');
           
-          // Obtener perfil del receptor para su teléfono
+          // Obtener perfil del receptor para su teléfono y nombre
           const recipientProfile = await getUserProfile(recipientUserId);
           
           if (recipientProfile.exists()) {
             const recipientData = recipientProfile.data();
             const recipientPhone = recipientData.phoneNumber;
+            const recipientFirstName = recipientData.first_name || recipientData.displayName?.split(' ')[0] || 'Usuario';
             
-            // Obtener nombre del remitente (usuario actual)
+            console.log('📋 Recipient phone:', recipientPhone ? `${recipientPhone.substring(0, 3)}***` : 'NOT FOUND');
+            console.log('👤 Recipient name:', recipientFirstName);
+            
+            // Obtener nombre del remitente (usuario actual) - SOLO EL PRIMER NOMBRE
             const payerProfile = await getUserProfile(user.uid);
-            let payerName = 'Usuario';
+            let payerFirstName = 'Usuario';
             
             if (payerProfile.exists()) {
               const payerData = payerProfile.data();
-              payerName = payerData.displayName || payerData.first_name || 'Usuario';
+              // Extraer SOLO el primer nombre
+              if (payerData.first_name) {
+                payerFirstName = payerData.first_name;
+              } else if (payerData.displayName) {
+                payerFirstName = payerData.displayName.split(' ')[0];
+              }
             }
             
+            console.log('👤 Sender (payer) first name:', payerFirstName);
+            
             if (recipientPhone) {
-              await sendDepositNotification(recipientPhone, payerName);
-              console.log('✅ WhatsApp notification sent to receiver');
+              console.log('📤 Calling sendDepositNotification...');
+              const result = await sendDepositNotification(recipientPhone, payerFirstName);
+              
+              if (result.success) {
+                console.log('✅ ¡WhatsApp notification sent successfully!');
+                console.log('📨 Message ID:', result.messageId);
+              } else {
+                console.error('❌ WhatsApp notification failed:', result.error);
+              }
             } else {
               console.warn('⚠️ Receiver has no phone number, skipping WhatsApp notification');
             }
           } else {
             console.warn('⚠️ Receiver profile not found, skipping WhatsApp notification');
           }
+          
+          console.log('═══════════════════════════════════════════════════════════');
         } catch (whatsappError) {
           // No fallar la transferencia si WhatsApp falla
-          console.error('❌ WhatsApp notification failed (non-critical):', whatsappError.message);
+          console.error('═══════════════════════════════════════════════════════════');
+          console.error('❌ WHATSAPP NOTIFICATION FAILED (NON-CRITICAL)');
+          console.error('═══════════════════════════════════════════════════════════');
+          console.error('Error:', whatsappError.message);
+          console.error('Stack:', whatsappError.stack);
+          console.error('═══════════════════════════════════════════════════════════');
         }
       }
 

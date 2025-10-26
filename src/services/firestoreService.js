@@ -2324,6 +2324,68 @@ export const getAccountTransactions = (accountId, userId, callback, maxResults =
 };
 
 /**
+ * Busca el userId del dueño de una tarjeta (card) por su accountNumber.
+ * Busca en la colección 'cards' una tarjeta de tipo "Checking" con ese accountNumber.
+ * @param {string} accountNumber - Número de cuenta (CLABE) a buscar.
+ * @returns {Promise<{userId: string | null, cardData?: object}>}
+ */
+export const findUserByCardAccountNumber = async (accountNumber) => {
+  if (!accountNumber) {
+    console.error('❌ Account number is required');
+    return { userId: null };
+  }
+
+  try {
+    console.log('🔍 Searching for card with accountNumber:', accountNumber);
+    
+    const cardsRef = collection(db, 'cards');
+    // Buscar tarjeta con ese accountNumber (CLABE)
+    const q = query(cardsRef, where('accountNumber', '==', accountNumber));
+    const querySnapshot = await getDocs(q);
+
+    if (!querySnapshot.empty) {
+      // Buscar específicamente una tarjeta "Checking"
+      for (const docSnap of querySnapshot.docs) {
+        const cardData = docSnap.data();
+        
+        // Verificar que sea tipo Checking o debit
+        if (cardData.tipo === 'Checking' || cardData.accountType === 'debit') {
+          // Obtener el userId del dueño de la tarjeta
+          let userId = null;
+          
+          // Puede estar en ownerId o en members[0]
+          if (cardData.ownerId) {
+            userId = cardData.ownerId;
+          } else if (cardData.members && cardData.members.length > 0) {
+            userId = cardData.members[0];
+          } else if (cardData.userId) {
+            userId = cardData.userId;
+          }
+          
+          if (userId) {
+            console.log('✅ Found card owner userId:', userId);
+            return {
+              userId: userId,
+              cardData: { id: docSnap.id, ...cardData }
+            };
+          }
+        }
+      }
+      
+      console.warn('⚠️ Card found but no Checking/debit type or no userId');
+      return { userId: null };
+    } else {
+      console.warn('⚠️ No card found with accountNumber:', accountNumber);
+      return { userId: null };
+    }
+
+  } catch (error) {
+    console.error('❌ Error finding user by card account number:', error);
+    return { userId: null };
+  }
+};
+
+/**
  * Busca una cuenta por su número de cuenta (accountNumber) y tipo "Checking".
  * Si se proporciona targetUserId, busca solo en las cuentas de ese usuario.
  * Si no se proporciona, busca en toda la base de datos.
