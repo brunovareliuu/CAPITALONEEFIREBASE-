@@ -281,6 +281,23 @@ match /transfers/{transferId} {
 - Sistema de préstamos (LoanScreen.js)
 - Evaluación de elegibilidad para productos financieros
 
+#### Integración con Botpress
+- **Archivo**: `botpress-integration.js`
+- **Documentación**: `BOTPRESS_INTEGRATION.md`
+- **Función principal**: `generateUserAIPrompt()`
+- **Variable de salida**: `user.aiPrompt`
+
+El sistema genera automáticamente un prompt personalizado con:
+- Contexto del usuario (nombre, teléfono, credit score)
+- Personalidad financiera según categoría
+- Productos recomendados para su nivel
+- Tono de comunicación apropiado
+- Límites y restricciones de productos
+- Estrategia de conversación sugerida
+- Ejemplos de apertura personalizados
+
+Ver `BOTPRESS_INTEGRATION.md` para instrucciones completas de implementación.
+
 ## Dependencias Principales
 
 - **React Native**: Framework de desarrollo móvil
