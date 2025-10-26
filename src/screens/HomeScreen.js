@@ -720,8 +720,19 @@ const HomeScreen = ({ navigation }) => {
       // Refresh balances for all regular cards (using Firebase)
       const cardsWithAccountIds = cards.filter(card => card.accountId);
       if (cardsWithAccountIds.length > 0) {
-        const accountIds = cardsWithAccountIds.map(card => card.accountId);
-        await refreshAccountsBalances(accountIds);
+        // Refresh balances for regular cards using Firebase
+        for (const card of cardsWithAccountIds) {
+          try {
+            const accountDoc = await getAccountById(card.accountId);
+            if (accountDoc.exists()) {
+              const accountData = accountDoc.data();
+              const balance = accountData.balance || 0;
+              console.log(`✅ Refreshed ${card.name} balance: ${balance}`);
+            }
+          } catch (error) {
+            console.error(`❌ Error refreshing ${card.name} balance:`, error);
+          }
+        }
         console.log('✅ Refreshed regular cards balances');
       }
 

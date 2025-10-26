@@ -15,7 +15,7 @@ import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { db } from '../config/firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { getCards, getCategories, addExpense, payCreditCard, addPendingTransaction, getUserProfile, getAccountById, updateAccount } from '../services/firestoreService';
+import { getCards, getCategories, addExpense, payCreditCard, addPendingTransaction, getUserProfile, getAccountById, updateAccount, createPurchase } from '../services/firestoreService';
 import { useAuth } from '../context/AuthContext';
 
 const dateIdLocal = (d = new Date()) => {
@@ -201,18 +201,20 @@ const AddExpenseScreen = ({ navigation }) => {
         updatedAt: new Date()
       });
 
-      // 3. Guardar la transacción en Firestore
-      const transactionData = {
+      // 3. Guardar la compra en la colección purchases
+      const purchaseData = {
+        userId: user.uid,
+        accountId: selectedCard.accountId,
         amount: -amount, // Negativo para expenses
         description: formData.description || 'Purchase',
         date: dateIdLocal(), // YYYY-MM-DD (local)
         timestamp: new Date(),
         status: 'completed',
-        accountId: selectedCard.accountId,
+        type: 'purchase',
       };
-      console.log('💾 Transaction data to save:', transactionData);
+      console.log('💾 Purchase data to save:', purchaseData);
 
-      await addExpense(user.uid, formData.selectedCard, transactionData);
+      await createPurchase(purchaseData);
 
       // 3. Trigger refresh para actualizar la UI
       console.log('🔄 Refreshing data after purchase...');

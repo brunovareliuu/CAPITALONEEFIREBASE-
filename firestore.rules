@@ -224,9 +224,25 @@ match /transactions/{transactionId} {
         request.auth.uid == resource.data.payerUserId ||
         request.auth.uid == resource.data.payeeUserId
       );
-      // Solo el propietario (payer) puede crear su transacción
-      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      // El usuario puede crear transacciones donde es parte de la transacción (para transferencias)
+      allow create: if isSignedIn() && (
+        request.auth.uid == request.resource.data.userId ||
+        (request.resource.data.type == 'transfer' && (
+          request.auth.uid == request.resource.data.fromAccountOwner ||
+          request.auth.uid == request.resource.data.toAccountOwner
+        ))
+      );
       // Solo el propietario puede actualizar/eliminar su transacción
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
+    }
+
+    // --- Colección de Compras (Purchases) ---
+    match /purchases/{purchaseId} {
+      // El usuario puede leer/listar sus propias compras (para queries)
+      allow read, list: if isSignedIn() && request.auth.uid == resource.data.userId;
+      // El usuario puede crear compras para sí mismo
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      // Solo el propietario puede actualizar/eliminar su compra
       allow update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
     }
   }

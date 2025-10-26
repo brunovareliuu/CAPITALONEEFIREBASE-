@@ -16,7 +16,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useAuth } from '../../context/AuthContext';
 import { colors } from '../../styles/colors';
 import { getCardType, getCardColors, getCardTypeLabel, shouldShowTypeBadge } from '../../utils/cardUtils';
-import { getAccountById, getAccountTransactions } from '../../services/firestoreService';
+import { getAccountById, getAccountTransactions, getPurchasesByAccount, getUserTransactions } from '../../services/firestoreService';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -353,11 +353,14 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
     }
   }, [tarjetaDigital]);
 
-  // Load transactions from Firebase only
+  // Load transactions and purchases from Firebase
   useEffect(() => {
-    let unsubscribe = () => {};
+    let unsubscribeTransactions = () => {};
+    let unsubscribePurchases = () => {};
+    let transactionsData = [];
+    let purchasesData = [];
 
-    const loadTransactions = () => {
+    const loadMovements = () => {
       // For credit cards, don't load transactions as they work differently
       if (tarjetaDigital?.tipo === 'Credit Card') {
         console.log('💳 Credit card detected - skipping transaction loading');
@@ -365,41 +368,42 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
         return;
       }
 
-      // Use Firebase for all accounts (forgetting Nessie completely)
+      // Use Firebase for all accounts
       if (tarjetaDigital?.accountId) {
-        console.log('🔥 Loading transactions from Firebase for account:', tarjetaDigital.accountId);
+        console.log('🔥 Loading movements from Firebase for account:', tarjetaDigital.accountId);
 
-        unsubscribe = getAccountTransactions(tarjetaDigital.accountId, user.uid, (firebaseTransactions) => {
-          console.log('📦 Firebase transactions received:', firebaseTransactions.length);
+        // 1. Load transfers (transactions) for this account
+        unsubscribeTransactions = getUserTransactions(user.uid, (firebaseTransactions) => {
+          // Filter transactions that involve this account
+          const accountTransactions = firebaseTransactions.filter(transaction => {
+            return transaction.fromAccountId === tarjetaDigital.accountId ||
+                   transaction.toAccountId === tarjetaDigital.accountId;
+          });
 
           // Convert Firebase transactions to UI format
-          const formattedMovements = firebaseTransactions.map(transaction => {
-            // Determine if this account is the sender or receiver
-            const isSender = transaction.payerAccountId === tarjetaDigital.accountId;
-            const isReceiver = transaction.payeeAccountId === tarjetaDigital.accountId;
+          transactionsData = accountTransactions.map(transaction => {
+            const isSender = transaction.fromAccountId === tarjetaDigital.accountId;
+            const isReceiver = transaction.toAccountId === tarjetaDigital.accountId;
 
             let type, description, amount, category, icon;
 
             if (isSender) {
-              // This account sent money
               type = 'transfer_out';
-              description = transaction.description || `Transfer to ${transaction.payeeName || 'recipient'}`;
-              amount = -Math.abs(transaction.amount); // Negative for outgoing
+              description = transaction.description || `Transfer to ${transaction.toAccountHolder || 'recipient'}`;
+              amount = transaction.amount; // Already negative in transaction
               category = 'Transfer Sent';
               icon = 'paper-plane';
             } else if (isReceiver) {
-              // This account received money
               type = 'transfer_in';
-              description = transaction.description || `Transfer from ${transaction.payerName || 'sender'}`;
+              description = transaction.description || `Transfer from ${transaction.fromAccountHolder || 'sender'}`;
               amount = Math.abs(transaction.amount); // Positive for incoming
               category = 'Transfer Received';
               icon = 'paper-plane';
             }
 
-            // Convert Firebase timestamp to date string
-            const transactionDate = transaction.createdAt?.toDate?.() || new Date(transaction.createdAt || Date.now());
-            const dateString = transactionDate.toISOString().split('T')[0]; // YYYY-MM-DD format
-            const timeString = transactionDate.toTimeString().slice(0, 5); // HH:MM format
+            const transactionDate = transaction.createdAt?.toDate?.() || new Date(transaction.timestamp || Date.now());
+            const dateString = transactionDate.toISOString().split('T')[0];
+            const timeString = transactionDate.toTimeString().slice(0, 5);
 
             return {
               id: transaction.id,
@@ -414,11 +418,46 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
             };
           });
 
-          console.log('✅ Firebase transactions formatted:', formattedMovements.length);
-          console.log('📋 Formatted movements:', formattedMovements.map(m => ({ type: m.type, desc: m.description, amount: m.amount })));
-
-          setMovements(formattedMovements);
+          console.log('✅ Transactions formatted:', transactionsData.length);
+          combineAndSetMovements();
         });
+
+        // 2. Load purchases for this account
+        unsubscribePurchases = getPurchasesByAccount(tarjetaDigital.accountId, (firebasePurchases) => {
+          console.log('📦 Purchases received:', firebasePurchases.length);
+
+          // Convert Firebase purchases to UI format
+          purchasesData = firebasePurchases.map(purchase => {
+            const purchaseDate = purchase.createdAt?.toDate?.() || new Date(purchase.timestamp || Date.now());
+            const dateString = purchaseDate.toISOString().split('T')[0];
+            const timeString = purchaseDate.toTimeString().slice(0, 5);
+
+            return {
+              id: purchase.id,
+              type: 'gasto', // Purchase/expense
+              description: purchase.description || 'Purchase',
+              amount: purchase.amount, // Already negative
+              date: dateString,
+              time: timeString,
+              category: 'Purchase',
+              icon: 'shopping-cart',
+              status: purchase.status || 'completed'
+            };
+          });
+
+          console.log('✅ Purchases formatted:', purchasesData.length);
+          combineAndSetMovements();
+        });
+
+        // Helper function to combine and set movements
+        const combineAndSetMovements = () => {
+          const combinedMovements = [...transactionsData, ...purchasesData]
+            .sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time)); // Sort by date descending
+
+          console.log('📋 Combined movements:', combinedMovements.length);
+          setMovements(combinedMovements);
+        };
+
       } else {
         console.log('⚠️ No account ID found for card');
         setMovements([]);
@@ -426,16 +465,15 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
     };
 
     if (tarjetaDigital) {
-      loadTransactions();
+      loadMovements();
     }
 
     // Cleanup function
     return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
+      unsubscribeTransactions();
+      unsubscribePurchases();
     };
-  }, [tarjetaDigital]);
+  }, [tarjetaDigital, user.uid]);
 
   // Refresh data when dataRefreshTrigger changes (e.g., after a purchase)
   useEffect(() => {

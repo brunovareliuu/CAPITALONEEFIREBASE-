@@ -1,4 +1,5 @@
 ﻿import { getFirestore } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -22,6 +23,7 @@ import {
 } from 'firebase/firestore';
 
 const db = getFirestore();
+const auth = getAuth();
 
 // --- Funciones de Perfil de Usuario ---
 
@@ -2024,6 +2026,26 @@ export const createAccount = async (accountData, customId = null) => {
 };
 
 /**
+ * Obtiene el userId de una cuenta por su accountId.
+ * @param {string} accountId - ID de la cuenta.
+ * @returns {Promise<string|null>} User ID del propietario de la cuenta o null si no se encuentra.
+ */
+export const getUserIdByAccountId = async (accountId) => {
+  if (!accountId) return null;
+
+  try {
+    const accountDoc = await getDoc(doc(db, 'accounts', accountId));
+    if (accountDoc.exists()) {
+      return accountDoc.data().userId || null;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting userId by accountId:', error);
+    return null;
+  }
+};
+
+/**
  * Actualiza el balance de una cuenta (usando transacción para consistencia)
  * @param {string} accountId - ID de la cuenta
  * @param {number} amount - Monto a agregar (positivo) o restar (negativo)
@@ -2090,6 +2112,70 @@ export const createTransaction = async (transactionData) => {
 
   console.log('✅ Transaction created in Firestore with ID:', transactionDoc.id);
   return transactionDoc;
+};
+
+/**
+ * Crea una nueva compra (purchase) en Firestore.
+ * @param {Object} purchaseData - Datos de la compra.
+ * @returns {Promise<DocumentReference>} Referencia al documento creado.
+ */
+export const createPurchase = async (purchaseData) => {
+  if (!purchaseData.userId) throw new Error('User ID is required to create a purchase.');
+  if (!purchaseData.accountId) throw new Error('Account ID is required to create a purchase.');
+
+  const purchasesRef = collection(db, 'purchases');
+  const purchaseDoc = await addDoc(purchasesRef, {
+    ...purchaseData,
+    status: purchaseData.status || 'completed',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  console.log('✅ Purchase created in Firestore with ID:', purchaseDoc.id);
+  return purchaseDoc;
+};
+
+/**
+ * Obtiene las compras de una cuenta en tiempo real.
+ * @param {string} accountId - ID de la cuenta.
+ * @param {function} callback - Función a llamar con las compras.
+ * @returns {function} Función para cancelar la suscripción.
+ */
+export const getPurchasesByAccount = (accountId, callback) => {
+  if (!accountId) {
+    console.error('Account ID is required to get purchases');
+    return () => {};
+  }
+
+  // Get current user to filter purchases by userId first, then by accountId
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    console.error('No authenticated user');
+    callback([]);
+    return () => {};
+  }
+
+  const purchasesRef = collection(db, 'purchases');
+  // Query by userId first (more efficient), then filter by accountId in client
+  const q = query(purchasesRef, where('userId', '==', currentUser.uid), orderBy('createdAt', 'desc'));
+
+  const unsubscribe = onSnapshot(q, (snapshot) => {
+    const allPurchases = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    // Filter by accountId in client
+    const accountPurchases = allPurchases.filter(purchase => purchase.accountId === accountId);
+
+    console.log(`📦 Purchases for account ${accountId}:`, accountPurchases.length);
+    callback(accountPurchases);
+  }, (error) => {
+    console.error('Error getting purchases:', error);
+    callback([]);
+  });
+
+  return unsubscribe;
 };
 
 /**

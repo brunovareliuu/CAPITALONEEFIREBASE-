@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { updateContactLastUsed, getAccountById, createFirebaseTransfer, updateAccountBalance, createTransaction } from '../services/firestoreService';
+import { updateContactLastUsed, getAccountById, createFirebaseTransfer, updateAccountBalance, createTransaction, getUserIdByAccountId } from '../services/firestoreService';
 import EventBus from '../utils/EventBus';
 import StandardHeader from '../components/StandardHeader';
 
@@ -116,6 +116,7 @@ const TransferAmountScreen = ({ navigation, route }) => {
 
       console.log('💰 Balance ANTES del transfer:', previousBalance);
       console.log('💰 Monto a transferir:', amt);
+      console.log('💰 Delta a aplicar:', -amt);
       console.log('💰 Balance ESPERADO después:', expectedNew);
       console.log('📋 TarjetaDigital accountId:', tarjetaDigital?.accountId);
 
@@ -145,11 +146,39 @@ const TransferAmountScreen = ({ navigation, route }) => {
         amount: amt
       });
 
-      // 1. Actualizar balance del remitente
-      await updateAccountBalance(payerAccountId, expectedNew);
+      // 1. Actualizar balance del remitente (restar el monto transferido)
+      const payerResult = await updateAccountBalance(payerAccountId, -amt);
+      console.log('✅ Payer balance updated:', payerResult);
 
-      // 2. Crear transacción en Firestore
-      const transactionData = {
+      // 2. Encontrar al usuario del destinatario
+      console.log('🔍 Finding recipient user by account ID:', recipientAccountId);
+      const recipientUserId = await getUserIdByAccountId(recipientAccountId);
+
+      if (!recipientUserId) {
+        console.warn('⚠️ Recipient account not found or has no user. Transfer will only affect sender.');
+      } else {
+        console.log('✅ Found recipient user ID:', recipientUserId);
+
+        // 3. Actualizar balance del destinatario (sumar el monto recibido)
+        try {
+          const recipientResult = await updateAccountBalance(recipientAccountId, amt);
+          console.log('✅ Recipient balance updated:', recipientResult);
+
+          // Emitir evento para actualizar balance del destinatario
+          EventBus.emit('balance:updated', {
+            accountId: recipientAccountId,
+            newBalance: recipientResult.newBalance,
+            timestamp: Date.now(),
+          });
+        } catch (recipientError) {
+          console.error('❌ Error updating recipient balance:', recipientError);
+          // No fallar la transacción completa por esto, pero registrar el error
+        }
+      }
+
+      // 4. Crear transacción para el remitente (amount negativo)
+      const senderTransactionData = {
+        userId: user.uid,
         type: 'transfer',
         amount: -amt, // Negativo para el remitente
         description: `Transfer to ${contact.contactName}`,
@@ -157,17 +186,47 @@ const TransferAmountScreen = ({ navigation, route }) => {
         toAccountId: recipientAccountId,
         toAccountNumber: contact.contactCLABE,
         toAccountHolder: contact.contactName,
+        fromAccountOwner: user.uid, // Para reglas de Firestore
+        toAccountOwner: recipientUserId || null, // Para reglas de Firestore
         medium: 'balance',
         status: 'completed',
         timestamp: new Date(),
       };
 
-      await createTransaction(user.uid, transactionData);
+      await createTransaction(senderTransactionData);
+      console.log('✅ Sender transaction created');
 
-      // 3. Crear resultado compatible
+      // 5. Crear transacción para el destinatario si existe (amount positivo)
+      if (recipientUserId) {
+        const recipientTransactionData = {
+          userId: recipientUserId,
+          type: 'transfer',
+          amount: amt, // Positivo para el destinatario
+          description: `Transfer from ${user.displayName || user.email}`,
+          fromAccountId: payerAccountId,
+          toAccountId: recipientAccountId,
+          fromAccountNumber: '', // No tenemos el número del remitente
+          fromAccountHolder: user.displayName || user.email?.split('@')[0] || 'Unknown',
+          fromAccountOwner: user.uid, // Para reglas de Firestore
+          toAccountOwner: recipientUserId, // Para reglas de Firestore
+          medium: 'balance',
+          status: 'completed',
+          timestamp: new Date(),
+        };
+
+        try {
+          await createTransaction(recipientTransactionData);
+          console.log('✅ Recipient transaction created');
+        } catch (recipientTxError) {
+          console.error('❌ Error creating recipient transaction:', recipientTxError);
+          // No fallar por esto
+        }
+      }
+
+      // 6. Crear resultado compatible
       const result = {
-        payerAccount: { id: payerAccountId, balance: expectedNew },
-        payeeAccount: { id: recipientAccountId, balance: 0 }, // No podemos obtener balance del destinatario
+        payerAccount: { id: payerAccountId, balance: payerResult.newBalance },
+        payeeAccount: { id: recipientAccountId, balance: recipientUserId ? 'updated' : 'not_found' },
         amount: amt,
         description: `Transfer to ${contact.contactName}`,
         medium: 'balance',
