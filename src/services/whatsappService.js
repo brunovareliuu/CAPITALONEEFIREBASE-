@@ -263,6 +263,149 @@ export const sendWelcomeMessage = async (phoneNumber, clientName) => {
   }
 };
 
+/**
+ * Envía notificación de depósito recibido por WhatsApp
+ * 
+ * Esta función llama a la Cloud Function 'sendDepositNotification' de forma segura.
+ * 
+ * @param {string} phoneNumber - Número de teléfono del receptor con código de país (ej: "528120394578")
+ * @param {string} senderName - Nombre de quien envió el dinero
+ * 
+ * @return {Promise<Object>} Resultado del envío
+ *   - success: boolean - Si el mensaje se envió exitosamente
+ *   - messageId?: string - ID del mensaje de WhatsApp (si fue exitoso)
+ *   - error?: string - Mensaje de error (si falló)
+ * 
+ * @example
+ * try {
+ *   const result = await sendDepositNotification('528120394578', 'Juan Pérez');
+ *   if (result.success) {
+ *     console.log('✅ Deposit notification sent:', result.messageId);
+ *   }
+ * } catch (error) {
+ *   console.error('❌ Notification failed:', error.message);
+ * }
+ */
+export const sendDepositNotification = async (phoneNumber, senderName) => {
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('💰 WhatsApp Service: Sending deposit notification');
+  console.log('═══════════════════════════════════════════════════════════');
+
+  try {
+    // ═════════════════════════════════════════════════════════════════════
+    // 1. VALIDACIÓN LOCAL
+    // ═════════════════════════════════════════════════════════════════════
+    
+    const validation = validateParams(phoneNumber, senderName);
+    if (!validation.valid) {
+      console.error('❌ Validation error:', validation.error);
+      throw new Error(validation.error);
+    }
+
+    const formattedPhone = formatPhoneNumber(phoneNumber);
+    const firstName = getFirstName(senderName);
+
+    console.log('📋 Validated params:', {
+      phone: `${formattedPhone.substring(0, 3)}***`,
+      senderName: firstName,
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 2. LLAMAR A CLOUD FUNCTION
+    // ═════════════════════════════════════════════════════════════════════
+
+    const DEPOSIT_FUNCTION_URL = 'https://us-central1-capitalonehackmty.cloudfunctions.net/sendDepositNotification';
+    
+    console.log('📤 Calling Cloud Function: sendDepositNotification');
+    console.log('   URL:', DEPOSIT_FUNCTION_URL);
+
+    const fetchPromise = fetch(DEPOSIT_FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        data: {
+          phoneNumber: formattedPhone,
+          senderName: firstName,
+        },
+      }),
+    });
+
+    const response = await Promise.race([
+      fetchPromise,
+      timeoutPromise(CLIENT_TIMEOUT_MS),
+    ]);
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 3. PROCESAR RESPUESTA
+    // ═════════════════════════════════════════════════════════════════════
+
+    if (result.result && result.result.success) {
+      console.log('✅ Deposit notification sent successfully');
+      console.log('📨 Message ID:', result.result.messageId);
+      console.log('⏱️  Execution time:', result.result.executionTime);
+      console.log('═══════════════════════════════════════════════════════════');
+
+      return {
+        success: true,
+        messageId: result.result.messageId,
+        executionTime: result.result.executionTime,
+        timestamp: result.result.timestamp,
+      };
+    } else {
+      console.warn('⚠️ Deposit notification failed:', result.result?.error || 'Unknown error');
+      console.log('═══════════════════════════════════════════════════════════');
+
+      return {
+        success: false,
+        error: result.result?.error || 'Unknown error',
+      };
+    }
+  } catch (error) {
+    // ═════════════════════════════════════════════════════════════════════
+    // MANEJO DE ERRORES
+    // ═════════════════════════════════════════════════════════════════════
+
+    console.error('═══════════════════════════════════════════════════════════');
+    console.error('❌ WhatsApp Deposit Notification Error');
+    console.error('═══════════════════════════════════════════════════════════');
+
+    let errorMessage = 'Failed to send deposit notification';
+    let errorCode = 'UNKNOWN_ERROR';
+
+    if (error.message && error.message.includes('HTTP error')) {
+      errorCode = 'HTTP_ERROR';
+      errorMessage = error.message;
+      console.error('🔴 HTTP Error:', error.message);
+    } else if (error.message && error.message.includes('timeout')) {
+      errorCode = 'TIMEOUT';
+      errorMessage = 'Request timeout';
+      console.error('⏱️  Timeout Error:', error.message);
+    } else if (error.message && (error.message.includes('network') || error.message.includes('fetch'))) {
+      errorCode = 'NETWORK_ERROR';
+      errorMessage = 'Network error';
+      console.error('🌐 Network Error:', error.message);
+    } else {
+      console.error('🔴 Unexpected Error:', error.message);
+    }
+
+    console.error('═══════════════════════════════════════════════════════════');
+
+    return {
+      success: false,
+      error: errorMessage,
+      errorCode: errorCode,
+    };
+  }
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // FUNCIONES PARA FUTURAS IMPLEMENTACIONES
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -274,7 +417,6 @@ export const sendWelcomeMessage = async (phoneNumber, clientName) => {
  * - sendPaymentReminder(phoneNumber, clientName, amount, dueDate)
  * - sendExpenseAlert(phoneNumber, clientName, expenseDetails)
  * - sendBudgetAlert(phoneNumber, clientName, budgetName, percentage)
- * - sendTransferConfirmation(phoneNumber, clientName, amount, recipient)
  * 
  * Todas seguirían el mismo patrón:
  * 1. Validar parámetros localmente
@@ -288,4 +430,5 @@ export const sendWelcomeMessage = async (phoneNumber, clientName) => {
 
 export default {
   sendWelcomeMessage,
+  sendDepositNotification,
 };

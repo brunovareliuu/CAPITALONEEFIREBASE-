@@ -376,6 +376,199 @@ exports.sendWelcomeWhatsApp = onCall(
     },
 );
 
+/**
+ * Cloud Function: sendDepositNotification
+ *
+ * Envía una notificación por WhatsApp cuando un usuario recibe dinero.
+ *
+ * @param {Object} data - Datos de la petición
+ * @param {string} data.phoneNumber - Número de teléfono del receptor (con código de país, sin +)
+ * @param {string} data.senderName - Nombre de quien envió el dinero
+ *
+ * @return {Promise<Object>} Resultado del envío
+ *
+ * Ejemplo de uso desde el cliente:
+ * ```javascript
+ * const result = await sendDepositNotification({
+ *   phoneNumber: "528120394578",
+ *   senderName: "Juan Pérez"
+ * });
+ * ```
+ */
+exports.sendDepositNotification = onCall(
+    {
+      secrets: [whatsappPhoneNumberId, whatsappAccessToken],
+      cors: true,
+      invoker: "public",
+    },
+    async (request) => {
+      const startTime = Date.now();
+
+      logger.info("═══════════════════════════════════════════════════════════");
+      logger.info("💰 NUEVA SOLICITUD: sendDepositNotification");
+      logger.info("═══════════════════════════════════════════════════════════");
+
+      try {
+        // ═════════════════════════════════════════════════════════════════════
+        // 1. EXTRACCIÓN DE DATOS
+        // ═════════════════════════════════════════════════════════════════════
+
+        const {phoneNumber, senderName} = request.data;
+
+        logger.info("📋 Datos recibidos:", {
+          phoneNumber: phoneNumber ? `${phoneNumber.substring(0, 3)}***` : "missing",
+          senderName: senderName || "missing",
+        });
+
+        // ═════════════════════════════════════════════════════════════════════
+        // 2. VALIDACIONES
+        // ═════════════════════════════════════════════════════════════════════
+
+        // Validar número de teléfono
+        const phoneValidation = validatePhoneNumber(phoneNumber);
+        if (!phoneValidation.valid) {
+          logger.warn("⚠️ Número de teléfono inválido:", phoneValidation.error);
+          throw new HttpsError("invalid-argument", phoneValidation.error);
+        }
+
+        // Validar nombre del remitente
+        const nameValidation = validateClientName(senderName);
+        if (!nameValidation.valid) {
+          logger.warn("⚠️ Nombre de remitente inválido:", nameValidation.error);
+          throw new HttpsError("invalid-argument", nameValidation.error);
+        }
+
+        const formattedPhone = phoneValidation.formatted;
+        const trimmedName = senderName.trim();
+
+        logger.info("✅ Validaciones exitosas", {
+          formattedPhone: `${formattedPhone.substring(0, 3)}***`,
+          senderName: trimmedName,
+        });
+
+        // ═════════════════════════════════════════════════════════════════════
+        // 3. OBTENER CREDENCIALES DE WHATSAPP (SECRETS)
+        // ═════════════════════════════════════════════════════════════════════
+
+        const phoneNumberId = whatsappPhoneNumberId.value().trim();
+        const accessToken = whatsappAccessToken.value().trim();
+
+        if (!phoneNumberId || !accessToken) {
+          logger.error("❌ WhatsApp credentials not configured");
+          throw new HttpsError(
+              "failed-precondition",
+              "WhatsApp credentials are not configured",
+          );
+        }
+
+        logger.info("🔑 Credenciales de WhatsApp obtenidas");
+
+        // ═════════════════════════════════════════════════════════════════════
+        // 4. CONSTRUIR PAYLOAD PARA TEMPLATE: nuevo_deposito_en_tu_cuenta
+        // ═════════════════════════════════════════════════════════════════════
+
+        const payload = {
+          messaging_product: "whatsapp",
+          to: formattedPhone,
+          type: "template",
+          template: {
+            name: "nuevo_deposito_en_tu_cuenta",
+            language: {
+              code: "es_ES",
+            },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  {
+                    type: "text",
+                    text: trimmedName, // Nombre del remitente
+                  },
+                ],
+              },
+            ],
+          },
+        };
+
+        logger.info("📦 Payload construido:", {
+          to: formattedPhone,
+          template: "nuevo_deposito_en_tu_cuenta",
+          language: "es_ES",
+          senderName: trimmedName,
+        });
+
+        // ═════════════════════════════════════════════════════════════════════
+        // 5. ENVIAR A WHATSAPP API
+        // ═════════════════════════════════════════════════════════════════════
+
+        const whatsappResponse = await sendToWhatsAppAPI(
+            phoneNumberId,
+            accessToken,
+            payload,
+        );
+
+        // ═════════════════════════════════════════════════════════════════════
+        // 6. RESPUESTA EXITOSA
+        // ═════════════════════════════════════════════════════════════════════
+
+        const executionTime = Date.now() - startTime;
+
+        logger.info("═══════════════════════════════════════════════════════════");
+        logger.info("✅ NOTIFICACIÓN DE DEPÓSITO ENVIADA EXITOSAMENTE");
+        logger.info("═══════════════════════════════════════════════════════════");
+        logger.info(`⏱️  Tiempo de ejecución: ${executionTime}ms`);
+        logger.info(`📱 Teléfono: ${formattedPhone.substring(0, 3)}***`);
+        logger.info(`👤 Remitente: ${trimmedName}`);
+        logger.info(`📨 Message ID: ${whatsappResponse.messages?.[0]?.id || "N/A"}`);
+        logger.info("═══════════════════════════════════════════════════════════");
+
+        return {
+          success: true,
+          messageId: whatsappResponse.messages?.[0]?.id,
+          phone: formattedPhone,
+          senderName: trimmedName,
+          executionTime: `${executionTime}ms`,
+          timestamp: new Date().toISOString(),
+        };
+      } catch (error) {
+        // ═════════════════════════════════════════════════════════════════════
+        // MANEJO DE ERRORES
+        // ═════════════════════════════════════════════════════════════════════
+
+        const executionTime = Date.now() - startTime;
+
+        logger.error("═══════════════════════════════════════════════════════════");
+        logger.error("❌ ERROR AL ENVIAR NOTIFICACIÓN DE DEPÓSITO");
+        logger.error("═══════════════════════════════════════════════════════════");
+        logger.error(`⏱️  Tiempo hasta el error: ${executionTime}ms`);
+        logger.error("🔴 Error:", error.message);
+        logger.error("📚 Stack:", error.stack);
+        logger.error("═══════════════════════════════════════════════════════════");
+
+        // Si ya es un HttpsError, re-lanzarlo
+        if (error instanceof HttpsError) {
+          throw error;
+        }
+
+        // Si es un error de red o de la API de WhatsApp
+        if (error.message.includes("WhatsApp API error")) {
+          throw new HttpsError(
+              "unavailable",
+              "WhatsApp service is temporarily unavailable. Please try again later.",
+              {originalError: error.message},
+          );
+        }
+
+        // Error genérico
+        throw new HttpsError(
+            "internal",
+            "Failed to send deposit notification",
+            {originalError: error.message},
+        );
+      }
+    },
+);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACIÓN PARA FUTURAS FUNCIONES
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -384,7 +577,7 @@ exports.sendWelcomeWhatsApp = onCall(
  * NOTAS PARA FUTURAS IMPLEMENTACIONES:
  *
  * 1. Para agregar más templates de WhatsApp:
- *    - Crear una función similar a sendWelcomeWhatsApp
+ *    - Crear una función similar a sendWelcomeWhatsApp o sendDepositNotification
  *    - Reutilizar las funciones auxiliares (validatePhoneNumber, sendToWhatsAppAPI)
  *    - Cambiar solo el nombre del template y los parámetros
  *
@@ -392,7 +585,6 @@ exports.sendWelcomeWhatsApp = onCall(
  *    - Recordatorio de pago
  *    - Notificación de nuevo gasto
  *    - Alerta de presupuesto excedido
- *    - Confirmación de transferencia
  *
  * 3. Para testing local:
  *    - Usar Firebase Emulator Suite: npm run serve
