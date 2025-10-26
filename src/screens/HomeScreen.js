@@ -1083,39 +1083,10 @@ const HomeScreen = ({ navigation }) => {
           <TouchableOpacity
             onPress={() => {
               if (creditCard) {
-                // Navigate to credit card account details
-                // Convert account format to match TarjetaDigitalDetails expectations
-                // Generate a formatted credit card number for display
-                const generateCardNumber = () => {
-                  const num1 = Math.floor(1000 + Math.random() * 9000);
-                  const num2 = Math.floor(1000 + Math.random() * 9000);
-                  const num3 = Math.floor(1000 + Math.random() * 9000);
-                  const num4 = Math.floor(1000 + Math.random() * 9000);
-                  return `${num1} ${num2} ${num3} ${num4}`;
-                };
-
-                // Generate a real CVV for display
-                const generateCVV = () => {
-                  return Math.floor(100 + Math.random() * 900).toString();
-                };
-
-                const creditCardForDetails = {
-                  ...creditCard,
-                  numeroTarjeta: generateCardNumber(),
-                  fechaExpiracion: '12/29', // Default expiration
-                  cvv: generateCVV(), // Generate real CVV instead of ***
-                  nombreTitular: user?.displayName || user?.email?.split('@')[0] || 'Card Holder',
-                  tipo: 'Credit Card',
-                  tipoTexto: 'CREDIT',
-                  saldo: creditCard.balance || 0,
-                  activa: true,
-                  nickname: creditCard.nickname || 'Credit Card',
-                  userId: user.uid,
-                  accountId: creditCard.id, // Firebase account ID
-                };
-                navigation.navigate('TarjetaDigitalDetails', { tarjetaDigital: creditCardForDetails });
+                // Navigate to credit card account details (same flow as savings)
+                navigation.navigate('TarjetaDigitalDetails', { tarjetaDigital: creditCard });
               } else {
-                // Create new credit card
+                // Create new credit card (same flow as savings/debit)
                 navigation.navigate('AccountQuiz', {
                   skipTypeSelection: true,
                   accountType: 'Credit Card',
@@ -1214,36 +1185,8 @@ const HomeScreen = ({ navigation }) => {
 
         {/* Section 5: MSI and My Cards Buttons */}
         <View style={styles.cleanSection}>
-          <TouchableOpacity
-            style={styles.cleanRectButton}
-            onPress={() => {}}
-            activeOpacity={0.8}
-          >
-            <Icon name="calendar-check" size={20} color="#00487A" style={{ marginRight: 10 }} />
-            <Text style={styles.cleanRectButtonText}>Interest-Free Installments with Capital One</Text>
-            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.cleanRectButton}
-            onPress={() => navigation.navigate('AccountQuiz', {
-              skipTypeSelection: true,
-              accountType: 'Checking',
-              prefillNickname: true
-            })}
-            activeOpacity={0.8}
-          >
-            <Icon name="wallet" size={20} color="#00487A" style={{ marginRight: 10 }} />
-            <Text style={styles.cleanRectButtonText}>Create Debit Card</Text>
-          </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.cleanRectButton}
-            onPress={() => navigation.navigate('CapitalOne')}
-            activeOpacity={0.8}
-          >
-            <Icon name="credit-card" size={20} color="#00487A" style={{ marginRight: 10 }} />
-            <Text style={styles.cleanRectButtonText}>My Cards</Text>
-          </TouchableOpacity>
               </View>
 
         {/* Horizontal Divider */}

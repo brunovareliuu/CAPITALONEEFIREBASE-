@@ -21,7 +21,8 @@ import {
   addPlanExpense,
   addExpense,
   getPlanById,
-  getUserProfile
+  getUserProfile,
+  updateCardNameIfEmpty
 } from '../services/firestoreService';
 
 const formatDateId = (d = new Date()) => {
@@ -55,13 +56,32 @@ const AddPlanContributionScreen = ({ route, navigation }) => {
     getPlanById(planId, setPlan);
     getPlanPeople(planId, (list) => {
         setPeople(list);
-        // Set current user as default payer
+        // Set current user as default payer automatically
         const self = list.find(p => p.userId === user.uid);
         if (self) {
             setSelectedPayerId(self.id);
         }
     });
-    getCards(user.uid, setCards);
+    getCards(user.uid, async (cardsData) => {
+      // Actualizar tarjetas que no tienen nombre
+      const updatePromises = cardsData.map(async (card) => {
+        if (!card.name || card.name.trim() === '') {
+          const defaultName = `${card.type === 'debit' ? 'Débito' : card.type === 'credit' ? 'Crédito' : card.type === 'cash' ? 'Efectivo' : 'Tarjeta'} ${card.id.substring(0, 6)}`;
+          try {
+            await updateCardNameIfEmpty(card.id, defaultName);
+            // Actualizar el objeto local
+            card.name = defaultName;
+          } catch (error) {
+            console.error(`Error updating card ${card.id}:`, error);
+          }
+        }
+      });
+
+      // Esperar a que se actualicen todas las tarjetas
+      await Promise.all(updatePromises);
+
+      setCards(cardsData);
+    });
     getCategories(user.uid, setCategories);
 
   }, [planId, user]);
@@ -99,13 +119,15 @@ const AddPlanContributionScreen = ({ route, navigation }) => {
       return;
     }
 
-    // Requerir tanto tarjeta como categoría para contribuciones personales
-    if (isSelfSelected && !selectedCardId) {
-        Alert.alert('Error', 'As this is your contribution, please select a card.');
+    // Para planes de gestión, solo requerir tarjeta (sin categoría)
+    // Para otros planes, requerir tanto tarjeta como categoría
+    if (isSelfSelected && (!selectedCardId || cards.length === 0)) {
+        Alert.alert('Error', 'Debes tener al menos una tarjeta para hacer una contribución.');
         return;
     }
 
-    if (isSelfSelected && !selectedCategoryId) {
+    // Solo requerir categoría si NO es un plan de gestión
+    if (isSelfSelected && plan?.kind !== 'gestion' && !selectedCategoryId) {
         Alert.alert('Error', 'As this is your contribution, please select a category.');
         return;
     }
@@ -136,14 +158,15 @@ const AddPlanContributionScreen = ({ route, navigation }) => {
                 amount: -Math.abs(cleanAmount),
                 description: `[${plan?.title || 'Plan'}] ${description.trim()}`,
                 category: categoryForCard,
-                type: 'expense',
+                // Para planes de gestión, usar 'plan_purchase' como tipo
+                type: plan?.kind === 'gestion' ? 'plan_purchase' : 'expense',
                 recurrence: 'one-time',
                 date: formatDateId(new Date()),
                 timestamp: new Date(),
                 linkedPlanId: planId,
                 linkedPlanExpenseId: planExpenseRef?.id,
-                // Si es gestión sin categoría, marcar como pending
-                status: (plan?.kind === 'gestion' && !categoryForCard) ? 'pending' : 'completed'
+                // Para planes de gestión, siempre marcar como completed (sin categoría requerida)
+                status: plan?.kind === 'gestion' ? 'completed' : (categoryForCard ? 'completed' : 'pending')
             };
             await addExpense(user.uid, selectedCardId, txData);
         }
@@ -189,43 +212,52 @@ const AddPlanContributionScreen = ({ route, navigation }) => {
             onChangeText={setDescription}
           />
 
-          <Text style={styles.label}>Who paid?</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-            {people.map(p => (
-              <TouchableOpacity key={p.id} style={[styles.personCardBtn, selectedPayerId === p.id && styles.personCardBtnActive]} onPress={() => setSelectedPayerId(p.id)}>
-                <View style={[styles.personIcon, { backgroundColor: p.color || '#9aa0a6' }]}>
-                  <Icon name={'user'} size={14} color={'#fff'} />
-                </View>
-                <Text style={[styles.personBtnText, selectedPayerId === p.id && styles.personBtnTextActive]}>{p.userId === user?.uid ? 'You' : p.name}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
+          {/* Automáticamente se asume que el usuario actual paga */}
           {isSelfSelected && (
             <>
               <Text style={styles.label}>My Card</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                {cards.map((c) => (
-                  <TouchableOpacity key={c.id} style={[styles.cardItem, {backgroundColor: c.color || colors.gray}, selectedCardId === c.id && styles.selectedCard]} onPress={() => setSelectedCardId(c.id)}>
-                      <Text style={styles.cardName}>{c.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-
-              <Text style={styles.label}>
-                Category {plan?.kind === 'savings' ? '(Auto-assigned)' : ''}
-              </Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                  {categories.map((cat) => (
-                      <TouchableOpacity key={cat.id} style={[styles.categoryPill, {backgroundColor: cat.color}, selectedCategoryId === cat.id && styles.selectedCategory]} onPress={() => setSelectedCategoryId(cat.id)}>
-                          <Icon name={cat.icon || 'tag'} size={14} color="#fff" />
-                          <Text style={styles.categoryPillText}>{cat.name}</Text>
-                      </TouchableOpacity>
+              {cards.length === 0 ? (
+                <View style={styles.noCardsContainer}>
+                  <Icon name="credit-card" size={24} color="#666" />
+                  <Text style={styles.noCardsText}>No tienes tarjetas disponibles</Text>
+                  <Text style={styles.noCardsSubtext}>Crea una tarjeta primero para hacer contribuciones</Text>
+                </View>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  {cards.map((c) => (
+                    <TouchableOpacity key={c.id} style={[styles.cardItem, {backgroundColor: c.color || colors.gray}, selectedCardId === c.id && styles.selectedCard]} onPress={() => setSelectedCardId(c.id)}>
+                        <Text style={styles.cardName}>{c.name}</Text>
+                    </TouchableOpacity>
                   ))}
-              </ScrollView>
-              {plan?.kind === 'savings' && (
-                <Text style={styles.autoCategoryNote}>
-                  Category will be automatically assigned to this savings plan
+                </ScrollView>
+              )}
+
+              {/* Solo mostrar selector de categoría si NO es un plan de gestión */}
+              {plan?.kind !== 'gestion' && (
+                <>
+                  <Text style={styles.label}>
+                    Category {plan?.kind === 'savings' ? '(Auto-assigned)' : ''}
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                      {categories.map((cat) => (
+                          <TouchableOpacity key={cat.id} style={[styles.categoryPill, {backgroundColor: cat.color}, selectedCategoryId === cat.id && styles.selectedCategory]} onPress={() => setSelectedCategoryId(cat.id)}>
+                              <Icon name={cat.icon || 'tag'} size={14} color="#fff" />
+                              <Text style={styles.categoryPillText}>{cat.name}</Text>
+                          </TouchableOpacity>
+                      ))}
+                  </ScrollView>
+                  {plan?.kind === 'savings' && (
+                    <Text style={styles.autoCategoryNote}>
+                      Category will be automatically assigned to this savings plan
+                    </Text>
+                  )}
+                </>
+              )}
+
+              {/* Mostrar nota explicativa para planes de gestión */}
+              {plan?.kind === 'gestion' && (
+                <Text style={styles.gestionNote}>
+                  Esta contribución se registrará como una compra del plan y reducirá el balance de tu tarjeta.
                 </Text>
               )}
             </>
@@ -299,6 +331,43 @@ const styles = StyleSheet.create({
     color: '#666',
     fontStyle: 'italic',
     marginTop: 6,
+    lineHeight: 16,
+  },
+  gestionNote: {
+    fontSize: 14,
+    color: colors.primary,
+    fontStyle: 'italic',
+    marginTop: 8,
+    marginBottom: 12,
+    lineHeight: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#f0f8ff',
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  noCardsContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  noCardsText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  noCardsSubtext: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 4,
+    textAlign: 'center',
     lineHeight: 16,
   },
 });

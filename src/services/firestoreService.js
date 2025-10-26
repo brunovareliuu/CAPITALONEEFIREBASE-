@@ -120,6 +120,30 @@ export const addCard = (userId, cardData) => {
 };
 
 /**
+ * Actualiza el nombre de una tarjeta si no tiene uno.
+ * @param {string} cardId - ID de la tarjeta.
+ * @param {string} defaultName - Nombre por defecto a asignar.
+ * @returns {Promise<void>}
+ */
+export const updateCardNameIfEmpty = async (cardId, defaultName) => {
+  if (!cardId) throw new Error('Card ID is required.');
+
+  const cardRef = doc(db, 'cards', cardId);
+  const cardSnap = await getDoc(cardRef);
+
+  if (cardSnap.exists()) {
+    const cardData = cardSnap.data();
+    if (!cardData.name || cardData.name.trim() === '') {
+      await updateDoc(cardRef, {
+        name: defaultName,
+        updatedAt: serverTimestamp()
+      });
+      console.log(`✅ Updated card ${cardId} with name: ${defaultName}`);
+    }
+  }
+};
+
+/**
  * Obtiene los datos de una tarjeta específica.
  * @param {string} cardId - ID de la tarjeta.
  * @returns {Promise<DocumentSnapshot>}
@@ -2698,6 +2722,164 @@ export const getUserAccounts = (userId, callback) => {
   });
 
   return unsubscribe;
+};
+
+/**
+ * Crea una transferencia de checking a savings account.
+ * @param {string} checkingAccountId - ID de la cuenta checking (origen).
+ * @param {string} savingsAccountId - ID de la cuenta savings (destino).
+ * @param {number} amount - Monto a transferir.
+ * @param {string} description - Descripción opcional de la transferencia.
+ * @returns {Promise<object>} Resultado de la transferencia con balances actualizados.
+ */
+export const createSavingsTransfer = async (checkingAccountId, savingsAccountId, amount, description = 'Transfer to Savings') => {
+  console.log('🔥 Creating Savings Transfer:', { checkingAccountId, savingsAccountId, amount });
+
+  // PASO 1: Validar cuentas existen en Firestore
+  console.log('🔍 Validating accounts in Firestore...');
+
+  const [checkingDoc, savingsDoc] = await Promise.all([
+    getAccountById(checkingAccountId),
+    getAccountById(savingsAccountId)
+  ]);
+
+  if (!checkingDoc.exists()) {
+    throw new Error('Checking account not found');
+  }
+
+  if (!savingsDoc.exists()) {
+    throw new Error('Savings account not found');
+  }
+
+  const checkingData = checkingDoc.data();
+  const savingsData = savingsDoc.data();
+
+  console.log('✅ Checking account:', checkingData);
+  console.log('✅ Savings account:', savingsData);
+
+  // PASO 2: Verificar tipos de cuenta correctos
+  if (checkingData.accountType !== 'debit') {
+    throw new Error('Source account must be a checking/debit account');
+  }
+
+  if (savingsData.accountType !== 'savings') {
+    throw new Error('Destination account must be a savings account');
+  }
+
+  // PASO 3: Verificar fondos suficientes en checking account
+  const checkingBalance = checkingData.balance || 0;
+
+  if (checkingBalance < amount) {
+    throw new Error(
+      `Insufficient funds. Available: $${checkingBalance.toFixed(2)}`
+    );
+  }
+
+  console.log('💰 Checking balance:', checkingBalance);
+  console.log('💸 Transfer amount:', amount);
+
+  // PASO 4: Ejecutar la transferencia usando transacciones de Firestore
+  console.log('🔄 Executing savings transfer with Firestore transactions...');
+
+  let transferResult;
+  try {
+    transferResult = await runTransaction(db, async (transaction) => {
+      // Obtener datos frescos de las cuentas
+      const freshCheckingDoc = await transaction.get(checkingDoc.ref);
+      const freshSavingsDoc = await transaction.get(savingsDoc.ref);
+
+      if (!freshCheckingDoc.exists() || !freshSavingsDoc.exists()) {
+        throw new Error('One or both accounts no longer exist');
+      }
+
+      const freshCheckingData = freshCheckingDoc.data();
+      const freshSavingsData = freshSavingsDoc.data();
+
+      // Verificar fondos otra vez con datos frescos
+      const freshCheckingBalance = freshCheckingData.balance || 0;
+
+      if (freshCheckingBalance < amount) {
+        throw new Error('Insufficient funds (balance changed during transfer)');
+      }
+
+      // Calcular nuevos balances
+      const newCheckingBalance = freshCheckingBalance - amount;
+      const newSavingsBalance = (freshSavingsData.balance || 0) + amount;
+
+      // Actualizar balances
+      transaction.update(checkingDoc.ref, {
+        balance: newCheckingBalance,
+        updatedAt: serverTimestamp(),
+      });
+
+      transaction.update(savingsDoc.ref, {
+        balance: newSavingsBalance,
+        updatedAt: serverTimestamp(),
+      });
+
+      console.log('✅ Balances updated in savings transfer transaction');
+      console.log('💰 New checking balance:', newCheckingBalance);
+      console.log('💰 New savings balance:', newSavingsBalance);
+
+      // Retornar los balances calculados
+      return {
+        checkingAccount: {
+          id: checkingAccountId,
+          balance: newCheckingBalance,
+        },
+        savingsAccount: {
+          id: savingsAccountId,
+          balance: newSavingsBalance,
+        }
+      };
+    });
+
+    // PASO 5: Crear registro de transacción
+    console.log('📝 Creating savings transfer transaction record...');
+    const transactionData = {
+      userId: checkingData.userId, // Usuario que realiza la transferencia
+      type: 'transfer_out', // Tipo de transacción
+      amount: amount,
+      medium: 'balance',
+      description: description,
+
+      // Información del pagador (checking account)
+      payerAccountId: checkingAccountId,
+      payerAccountNumber: checkingData.accountNumber,
+      payerName: checkingData.nickname || 'Checking Account',
+      payerUserId: checkingData.userId,
+
+      // Información del receptor (savings account)
+      payeeAccountId: savingsAccountId,
+      payeeAccountNumber: savingsData.accountNumber,
+      payeeName: savingsData.nickname || 'Savings Account',
+      payeeUserId: savingsData.userId,
+
+      // Balances (después de la transferencia)
+      previousBalance: checkingBalance,
+      newBalance: checkingBalance - amount,
+
+      // Metadata
+      status: 'completed',
+      transactionDate: new Date().toISOString().split('T')[0],
+      createdBy: checkingData.userId,
+      isSavingsTransfer: true, // Flag para identificar transferencias a savings
+    };
+
+    const transactionDoc = await createTransaction(transactionData);
+    console.log('✅ Savings transfer transaction record created:', transactionDoc.id);
+
+    // PASO 6: Retornar resultado completo
+    return {
+      ...transferResult,
+      transactionId: transactionDoc.id,
+      success: true
+    };
+
+  } catch (error) {
+    console.error('❌ Savings transfer failed:', error);
+    throw error;
+  }
 };
 
 /**

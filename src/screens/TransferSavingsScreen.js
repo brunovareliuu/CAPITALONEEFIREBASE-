@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { getUserProfile, createTransaction, updateAccountBalance, createFirebaseTransfer } from '../services/firestoreService';
+import { getUserProfile, createTransaction, updateAccountBalance, createSavingsTransfer, getAccountById } from '../services/firestoreService';
 import EventBus from '../utils/EventBus';
 
 const TransferSavingsScreen = ({ navigation, route }) => {
@@ -27,18 +27,22 @@ const TransferSavingsScreen = ({ navigation, route }) => {
   const [amount, setAmount] = useState('');
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-  // Real-time balances from Nessie API
+  // Real-time balances from Firestore accounts
   const [checkingBalance, setCheckingBalance] = useState(0);
   const [savingsBalance, setSavingsBalance] = useState(0);
   const [loadingBalances, setLoadingBalances] = useState(true);
   const [balanceUpdated, setBalanceUpdated] = useState(false);
 
+  // Account objects loaded from Firestore
+  const [checkingAccount, setCheckingAccount] = useState(null);
+  const [savingsAccount, setSavingsAccount] = useState(null);
+
   // Quick amount presets
   const quickAmounts = [50, 100, 200, 500];
 
-  // Load balances from Firestore
+  // Load account objects and balances from Firestore
   useEffect(() => {
-    const loadBalances = async () => {
+    const loadAccountsAndBalances = async () => {
       if (!fromAccount || !toAccount) {
         setLoadingBalances(false);
         return;
@@ -46,19 +50,58 @@ const TransferSavingsScreen = ({ navigation, route }) => {
 
       try {
         setLoadingBalances(true);
-        // Use balances from account objects (updated in real-time via EventBus)
-        setCheckingBalance(fromAccount?.balance || 0);
-        setSavingsBalance(toAccount?.balance || 0);
+
+        // Load checking account from Firestore using accountId
+        let checkingAccountData = null;
+        if (fromAccount.accountId) {
+          const checkingDoc = await getAccountById(fromAccount.accountId);
+          if (checkingDoc.exists()) {
+            checkingAccountData = {
+              id: fromAccount.accountId,
+              ...checkingDoc.data(),
+              nickname: fromAccount.nickname || checkingDoc.data().nickname || 'Checking'
+            };
+            setCheckingAccount(checkingAccountData);
+            setCheckingBalance(checkingDoc.data().balance || 0);
+          }
+        } else {
+          // Fallback to direct account object
+          checkingAccountData = fromAccount;
+          setCheckingAccount(checkingAccountData);
+          setCheckingBalance(fromAccount.balance || 0);
+        }
+
+        // Load savings account from Firestore using accountId
+        let savingsAccountData = null;
+        if (toAccount.accountId) {
+          const savingsDoc = await getAccountById(toAccount.accountId);
+          if (savingsDoc.exists()) {
+            savingsAccountData = {
+              id: toAccount.accountId,
+              ...savingsDoc.data(),
+              nickname: toAccount.nickname || savingsDoc.data().nickname || 'Savings'
+            };
+            setSavingsAccount(savingsAccountData);
+            setSavingsBalance(savingsDoc.data().balance || 0);
+          }
+        } else {
+          // Fallback to direct account object
+          savingsAccountData = toAccount;
+          setSavingsAccount(savingsAccountData);
+          setSavingsBalance(toAccount.balance || 0);
+        }
+
       } catch (error) {
-        console.error('Error loading balances:', error);
-        setCheckingBalance(fromAccount?.balance || 0);
-        setSavingsBalance(toAccount?.balance || 0);
+        console.error('Error loading accounts and balances:', error);
+        // Fallback to card balances
+        setCheckingBalance(fromAccount?.saldo || fromAccount?.balance || 0);
+        setSavingsBalance(toAccount?.saldo || toAccount?.balance || 0);
       } finally {
         setLoadingBalances(false);
       }
     };
 
-    loadBalances();
+    loadAccountsAndBalances();
   }, [fromAccount, toAccount]);
 
   // Listen for balance updates from other transfers
@@ -66,12 +109,15 @@ const TransferSavingsScreen = ({ navigation, route }) => {
     const handleBalanceUpdate = (data) => {
       if (!data) return;
 
-      if (data.accountId === fromAccount?.id) {
+      // Update checking account balance
+      if (checkingAccount && data.accountId === checkingAccount.id) {
         setCheckingBalance(data.newBalance);
         setBalanceUpdated(true);
         // Reset indicator after 2 seconds
         setTimeout(() => setBalanceUpdated(false), 2000);
-      } else if (data.accountId === toAccount?.id) {
+      }
+      // Update savings account balance
+      else if (savingsAccount && data.accountId === savingsAccount.id) {
         setSavingsBalance(data.newBalance);
         setBalanceUpdated(true);
         // Reset indicator after 2 seconds
@@ -81,7 +127,7 @@ const TransferSavingsScreen = ({ navigation, route }) => {
 
     EventBus.on('balance:updated', handleBalanceUpdate);
     return () => EventBus.off('balance:updated', handleBalanceUpdate);
-  }, [fromAccount, toAccount]);
+  }, [checkingAccount, savingsAccount]);
 
   const handleQuickAmount = (quickAmount) => {
     setAmount(quickAmount.toString());
@@ -89,8 +135,8 @@ const TransferSavingsScreen = ({ navigation, route }) => {
 
   const handleTransfer = () => {
     // Validations
-    if (!fromAccount || !toAccount) {
-      Alert.alert('Error', 'Accounts not available');
+    if (!checkingAccount || !savingsAccount) {
+      Alert.alert('Error', 'Accounts not loaded yet. Please wait...');
       return;
     }
 
@@ -109,55 +155,60 @@ const TransferSavingsScreen = ({ navigation, route }) => {
     setShowConfirmModal(true);
   };
 
-  // 🔥 Nueva versión usando Firebase (reemplaza Nessie)
+  // 🔥 Nueva versión usando Firebase para transferencias a Savings
   const executeTransferWithFirebase = async () => {
     setShowConfirmModal(false);
     setTransferring(true);
 
     try {
       const amt = parseFloat(amount);
-      console.log('🔥 Iniciando transferencia interna con Firebase...');
+      console.log('🔥 Iniciando transferencia a savings con Firebase...');
 
-      // Usar createFirebaseTransfer para transferencias internas
-      console.log('🔥 Creating internal Firebase transfer:', {
-        from: fromAccount.id,
-        to: toAccount.id,
+      // Usar createSavingsTransfer para transferencias a savings
+      console.log('🔥 Creating savings transfer:', {
+        checkingAccountId: fromAccount.id,
+        savingsAccountId: toAccount.id,
         amount: amt
       });
 
-      const result = await createFirebaseTransfer(
-        fromAccount.id,
-        toAccount.id,
+      const result = await createSavingsTransfer(
+        checkingAccount.id, // checking account ID
+        savingsAccount.id,  // savings account ID
         amt,
-        'balance',
         'Transfer to Savings'
       );
 
-      console.log('✅ Internal transfer completed:', result);
+      console.log('✅ Savings transfer completed:', result);
 
       // Emitir eventos para actualizar UI en tiempo real
       EventBus.emit('balance:updated', {
-        accountId: fromAccount.id,
-        newBalance: result.payerAccount.balance,
+        accountId: checkingAccount.id,
+        newBalance: result.checkingAccount.balance,
         timestamp: Date.now(),
       });
 
       EventBus.emit('balance:updated', {
-        accountId: toAccount.id,
-        newBalance: result.payeeAccount.balance,
+        accountId: savingsAccount.id,
+        newBalance: result.savingsAccount.balance,
         timestamp: Date.now(),
       });
 
-      // Navegar a confirmación
+      // Navegar a confirmación con el formato correcto
       navigation.replace('TransferConfirmation', {
-        transfer: result,
+        transfer: {
+          id: result.transactionId,
+          amount: amt,
+          description: 'Transfer to Savings',
+          payerAccount: result.checkingAccount,
+          payeeAccount: result.savingsAccount,
+        },
         previousBalance: checkingBalance,
-        updatedPayerBalance: result.payerAccount.balance,
+        updatedPayerBalance: result.checkingAccount.balance,
         amount: amt,
       });
 
     } catch (error) {
-      console.error('❌ Transfer error:', error);
+      console.error('❌ Savings transfer error:', error);
       Alert.alert('Transfer Failed', error.message || 'An error occurred during the transfer');
     } finally {
       setTransferring(false);
@@ -179,7 +230,7 @@ const TransferSavingsScreen = ({ navigation, route }) => {
 
   // Validations
   const transferAmount = parseFloat(amount) || 0;
-  const isFormValid = fromAccount && toAccount && transferAmount > 0 && transferAmount <= checkingBalance;
+  const isFormValid = checkingAccount && savingsAccount && transferAmount > 0 && transferAmount <= checkingBalance;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -207,7 +258,7 @@ const TransferSavingsScreen = ({ navigation, route }) => {
             <View style={styles.accountBubble}>
               <View style={styles.accountHeader}>
                 <Icon name="university" size={16} color="#007AFF" />
-                <Text style={styles.bubbleName}>{fromAccount?.nickname || 'Checking'}</Text>
+                <Text style={styles.bubbleName}>{checkingAccount?.nickname || fromAccount?.nickname || 'Checking'}</Text>
                 {balanceUpdated && (
                   <View style={styles.updatedIndicator}>
                     <Icon name="sync" size={10} color="#34C759" />
@@ -231,7 +282,7 @@ const TransferSavingsScreen = ({ navigation, route }) => {
             <View style={styles.accountBubble}>
               <View style={styles.accountHeader}>
                 <Icon name="piggy-bank" size={16} color="#34C759" />
-                <Text style={styles.bubbleName}>{toAccount?.nickname || 'Savings'}</Text>
+                <Text style={styles.bubbleName}>{savingsAccount?.nickname || toAccount?.nickname || 'Savings'}</Text>
                 {balanceUpdated && (
                   <View style={styles.updatedIndicator}>
                     <Icon name="sync" size={10} color="#34C759" />
@@ -345,7 +396,7 @@ const TransferSavingsScreen = ({ navigation, route }) => {
               <Icon name="arrow-up" size={48} color="#34C759" />
               <Text style={styles.confirmTitle}>Confirm Transfer</Text>
               <Text style={styles.confirmMessage}>
-                Transfer ${transferAmount.toFixed(2)} from {fromAccount?.nickname} to {toAccount?.nickname}?
+                Transfer ${transferAmount.toFixed(2)} from {checkingAccount?.nickname || fromAccount?.nickname} to {savingsAccount?.nickname || toAccount?.nickname}?
               </Text>
               <Text style={styles.confirmSubtext}>This will move money to your savings account.</Text>
 
