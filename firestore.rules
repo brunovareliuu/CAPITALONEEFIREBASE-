@@ -1,0 +1,205 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Funciones de Ayuda ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Verifica si el usuario es el dueño de un recurso (genérico)
+    function isResourceOwner() {
+      // Se usa en reglas de 'update' o 'delete' donde se compara con 'resource.data'
+      return isSignedIn() && request.auth.uid == resource.data.ownerId;
+    }
+    
+    // Verifica si el usuario que crea el recurso es el dueño
+    function isCreatingOwnResource() {
+      // Se usa en reglas de 'create' donde se compara con 'request.resource.data'
+      return isSignedIn() && request.auth.uid == request.resource.data.ownerId;
+    }
+
+    // Verifica si el usuario es miembro de una tarjeta
+    function isCardMember(cardId) {
+      return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/cards/$(cardId)).data.members;
+    }
+
+    // Verifica si el usuario es el dueño de una tarjeta
+    function isCardOwner(cardId) {
+      return isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/cards/$(cardId)).data.ownerId;
+    }
+
+    // Verifica si el usuario es miembro de un plan
+    function isPlanMember(planId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/plan/$(planId)) && request.auth.uid in get(/databases/$(database)/documents/plan/$(planId)).data.members;
+    }
+
+    // Verifica si el usuario es el dueño de un plan
+    function isPlanOwner(planId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/plan/$(planId)) && request.auth.uid == get(/databases/$(database)/documents/plan/$(planId)).data.ownerId;
+    }
+
+    // Rule for 'expenses' collection group query, used in FrequencyTransactionsScreen
+    match /{path=**}/expenses/{expenseId} {
+      allow list: if isSignedIn();
+    }
+
+    // --- Colección de Usuarios (para perfil y categorías) ---
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
+
+      // Subcolección de Categorías
+      match /categories/{categoryId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      // Subcolección de Contactos para Transferencias
+      match /contacts/{contactId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+
+    // --- Colección de Presupuestos (Budgets) ---
+    match /budgets/{budgetId} {
+      allow read: if isSignedIn() && request.auth.uid == resource.data.userId;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
+    }
+
+// --- Colección de Transacciones Pendientes ---
+match /transactions/{transactionId} {
+  allow read, write: if isSignedIn() && request.auth.uid == resource.data.userId;
+  allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+
+  // Subcolección de categorizaciones para gastos compartidos
+  match /categorizations/{userId} {
+    allow read, write: if isSignedIn() && request.auth.uid == userId;
+    allow create: if isSignedIn() && request.auth.uid == userId;
+  }
+}
+
+    // --- Colección de Gastos en Tarjetas (para transacciones categorizadas) ---
+    match /cards/{cardId}/expenses/{expenseId} {
+      allow read: if isSignedIn() && (request.auth.uid in get(/databases/$(database)/documents/cards/$(cardId)).data.members || request.auth.uid == get(/databases/$(database)/documents/cards/$(cardId)).data.ownerId);
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.createdBy;
+      allow write: if isSignedIn() && request.auth.uid == resource.data.createdBy;
+    }
+
+    // --- Colección Global de Tarjetas (Cards) ---
+    match /cards/{cardId} {
+      allow read: if isSignedIn() && (request.auth.uid in resource.data.members || request.auth.uid == resource.data.ownerId || (resource.data.isShared == true && resource.data.shareCode != null));
+      allow create: if isCreatingOwnResource();
+      allow update: if isCardOwner(cardId)
+                   || (isSignedIn() && request.resource.data.members.size() == resource.data.members.size() + 1 && request.auth.uid in request.resource.data.members)
+                   || (isSignedIn() && request.auth.uid in resource.data.members && !(request.auth.uid in request.resource.data.members));
+      allow delete: if isCardOwner(cardId);
+
+      // Subcolección de Gastos
+      match /expenses/{expenseId} {
+        allow read: if isCardMember(cardId) || isCardOwner(cardId);
+        allow update, delete: if isCardMember(cardId) || isCardOwner(cardId);
+        allow create: if (isCardMember(cardId) || isCardOwner(cardId)) || 
+                         (get(/databases/$(database)/documents/cards/$(cardId)).data.isVirtual == true && request.resource.data.status == 'pending');
+
+        // Subcolección de Categorizaciones Individuales
+        match /categorizations/{userId} {
+          allow read: if isCardMember(cardId) || isCardOwner(cardId);
+          allow create, update: if isCardOwner(cardId) || (request.auth.uid == userId);
+          allow delete: if isCardOwner(cardId) || (request.auth.uid == userId) || (isCardMember(cardId) && request.auth.uid == userId);
+        }
+      }
+
+      // Subcolección de Participantes
+      match /participants/{participantId} {
+        allow read: if isCardMember(cardId) || (isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/cards/$(cardId)).data.ownerId);
+        // El dueño puede gestionar participantes. Un usuario puede gestionarse a sí mismo.
+        allow write: if isCardOwner(cardId) || (isSignedIn() && request.auth.uid == participantId);
+      }
+    }
+
+    // --- Colección de Códigos para Compartir ---
+    match /shareCodes/{code} {
+      allow read: if isSignedIn();
+      // Cualquier usuario autenticado puede crear/actualizar códigos (validación en app)
+      allow create, update: if isSignedIn();
+      // Cualquier usuario autenticado puede borrar códigos (validación en app)
+      allow delete: if isSignedIn();
+    }
+
+    // --- Invitaciones a Planes (global) ---
+    match /planInvites/{code} {
+      allow read: if isSignedIn();
+      // Solo el dueño del plan puede crear/actualizar/borrar el código
+      allow write: if isSignedIn() && isPlanOwner(request.resource.data.planId);
+    }
+
+    // --- Colección de Planes ---
+    match /plan/{planId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.members;
+      allow create: if isCreatingOwnResource();
+      // Permitir:
+      // - Dueño: cualquier actualización
+      // - Miembro que se agrega a sí mismo (size +1 y está en request.resource.members)
+      // - Miembro que se quita a sí mismo (size -1 y ya no está en request.resource.members)
+      allow update: if isPlanOwner(planId)
+                   || (
+                        isSignedIn()
+                        && request.resource.data.members.size() == resource.data.members.size() + 1
+                        && request.auth.uid in request.resource.data.members
+                      )
+                   || (
+                        isSignedIn()
+                        && request.resource.data.members.size() == resource.data.members.size() - 1
+                        && !(request.auth.uid in request.resource.data.members)
+                        && (request.auth.uid in resource.data.members)
+                      );
+      allow delete: if isPlanOwner(planId);
+
+      // Subcolección de Eventos
+      match /events/{eventId} {
+        allow read, write: if isPlanMember(planId);
+      }
+
+      // Subcolección de Logs de Ahorro
+      match /savingsLogs/{logId} {
+        allow read, write: if isPlanMember(planId);
+      }
+
+
+      // Gestión: Subcolección de Personas del Plan
+      match /people/{personId} {
+        // Lectura: miembros del plan (solo si el plan existe)
+        allow read: if isPlanMember(planId);
+        // Crear: cualquier miembro del plan
+        allow create: if isPlanMember(planId);
+        // Actualizar/borrar: dueño o el propio usuario dueño del documento
+        allow update, delete: if isPlanOwner(planId) || (isPlanMember(planId) && request.auth.uid == resource.data.userId);
+      }
+
+      // Gestión: Subcolección de Gastos del Plan
+      match /expenses/{expenseId} {
+        // Solo miembros del plan (solo si el plan existe)
+        allow read: if isPlanMember(planId);
+        // Crear gasto: debe ser miembro del plan
+        allow create: if isPlanMember(planId);
+        // Actualizar/eliminar gasto: dueño del plan o quien lo creó (createdBy)
+        allow update, delete: if isPlanOwner(planId) || (isPlanMember(planId) && request.auth.uid == resource.data.createdBy);
+      }
+    }
+
+    // --- Colección de Pagos Recurrentes (BILLS) - Reglas permisivas ---
+    match /recurringPayments/{billDoc} {
+      // Reglas "super chill" para bills - cualquier usuario autenticado puede hacer todo
+      allow read, write, create, update, delete: if isSignedIn();
+    }
+
+    // --- Colección de Loans ---
+    match /loans/{loanId} {
+      allow read: if isSignedIn() && request.auth.uid == resource.data.userId;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
+    }
+  }
+}

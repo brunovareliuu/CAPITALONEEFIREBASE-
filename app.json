@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "Capital One",
+    "slug": "capitalone",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.capitalone.hackmty",
+      "scheme": "capitalone"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.capitalone.hackmty",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "capitalone"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_EAS_PROJECT_ID"
+      },
+      "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyCxhsxepEvYiPn6uz5qGRAlNxYWF_XwJs0",
+      "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "capitalonehackmty.firebaseapp.com",
+      "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "capitalonehackmty",
+      "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "capitalonehackmty.firebasestorage.app",
+      "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "964817610055",
+      "EXPO_PUBLIC_FIREBASE_APP_ID": "1:964817610055:web:484bcfe2380ff60f375862",
+      "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-LC9ELCF23T"
+    },
+    "plugins": []
+  }
+}
