@@ -464,7 +464,7 @@ exports.sendDepositNotification = onCall(
         logger.info("🔑 Credenciales de WhatsApp obtenidas");
 
         // ═════════════════════════════════════════════════════════════════════
-        // 4. CONSTRUIR PAYLOAD PARA TEMPLATE: nuevo_deposito_en_tu_cuenta
+        // 4. CONSTRUIR PAYLOAD PARA TEMPLATE: nuevo_depsito_en_tu_cuenta
         // ═════════════════════════════════════════════════════════════════════
 
         const payload = {
@@ -472,7 +472,7 @@ exports.sendDepositNotification = onCall(
           to: formattedPhone,
           type: "template",
           template: {
-            name: "nuevo_deposito_en_tu_cuenta",
+            name: "nuevo_depsito_en_tu_cuenta",
             language: {
               code: "es_ES",
             },
@@ -492,7 +492,7 @@ exports.sendDepositNotification = onCall(
 
         logger.info("📦 Payload construido:", {
           to: formattedPhone,
-          template: "nuevo_deposito_en_tu_cuenta",
+          template: "nuevo_depsito_en_tu_cuenta",
           language: "es_ES",
           senderName: trimmedName,
         });
