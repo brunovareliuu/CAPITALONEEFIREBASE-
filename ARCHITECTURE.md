@@ -180,10 +180,11 @@ match /transfers/{transferId} {
 - Configuración en `src/config/firebase.js`
 - Proyecto: capitalonehackmty
 
-### WhatsApp Business API
+### WhatsApp Business API & Services
 - **Cloud Functions**:
   1. `sendWelcomeWhatsApp` - Bienvenida al registrarse
   2. `sendDepositNotification` - Notificación al recibir dinero
+  3. `getCreditScoreByPhone` - Lookup de usuario y credit score por teléfono
   
         - **Templates**:
           1. `bienvenida_capi` (APPROVED ✅)
@@ -203,6 +204,82 @@ match /transfers/{transferId} {
           - Llamadas: `signupscreen.js`, `TransferAmountScreen.js`
           - Configuración: `WHATSAPP_CONFIG.md`
           - **Nota**: El template de depósito envía el nombre del RECEPTOR (no del remitente)
+
+### Credit Score System
+- **Ubicación**: `functions/index.js`, `src/screens/LoanScreen.js`
+- **Cloud Function**: `getCreditScoreByPhone`
+- **Endpoint**: `https://us-central1-capitalonehackmty.cloudfunctions.net/getCreditScoreByPhone`
+
+#### Funcionalidad
+- Busca usuario por número de teléfono de WhatsApp
+- Normaliza automáticamente números mexicanos (quita el "1" extra de WhatsApp)
+- Calcula credit score dinámico basado en datos del usuario
+- Clasifica score en 5 categorías (Excellent, Very Good, Good, Fair, Poor)
+- Retorna información crediticia completa
+
+#### Normalización de Teléfono
+- WhatsApp (México): `5218120394578` (con "1" extra)
+- Base de datos: `528120394578` (sin el "1")
+- La función `normalizeWhatsAppPhone()` maneja esta conversión automáticamente
+
+#### Factores del Credit Score
+1. **Préstamos** (40% - máx. 240 pts)
+   - +50 pts por préstamo aprobado
+   - -30 pts por préstamo rechazado
+
+2. **Balance Total** (30% - máx. 180 pts)
+   - +10 pts por cada $1,000 de balance
+
+3. **Transacciones** (20% - máx. 120 pts)
+   - +2 pts por cada transacción
+
+4. **Antigüedad** (10% - máx. 60 pts)
+   - +10 pts por cada mes de cuenta activa
+
+**Rango**: 300 (mínimo) - 850 (máximo)
+
+#### Clasificación en 5 Grupos
+| Categoría | Rango | Límite Préstamo | Tasa Interés |
+|-----------|-------|-----------------|--------------|
+| Excellent | 800-850 | $100,000 | 5-7% |
+| Very Good | 740-799 | $75,000 | 7-10% |
+| Good | 670-739 | $50,000 | 10-14% |
+| Fair | 580-669 | $25,000 | 14-18% |
+| Poor | 300-579 | $5,000 | 18-25% |
+
+#### Request/Response
+```json
+// Request
+{
+  "data": {
+    "phoneNumber": "5218120394578"
+  }
+}
+
+// Response
+{
+  "success": true,
+  "found": true,
+  "user": {
+    "firstName": "Marcelo",
+    "lastName": "García",
+    "fullName": "Marcelo García",
+    "phoneNumber": "528120394578"
+  },
+  "creditScore": {
+    "score": 730,
+    "category": "Good",
+    "description": "Buen historial crediticio...",
+    "loanLimit": 50000,
+    "interestRate": "10-14%"
+  }
+}
+```
+
+#### Uso Principal
+- Agentes de WhatsApp para consultas de credit score
+- Sistema de préstamos (LoanScreen.js)
+- Evaluación de elegibilidad para productos financieros
 
 ## Dependencias Principales
 

@@ -226,8 +226,152 @@ El Access Token de WhatsApp puede expirar. Si eso ocurre:
 
 ## Cloud Functions Desplegadas
 
+### WhatsApp Integration
 1. **sendWelcomeWhatsApp** - Envía mensaje de bienvenida al registrar usuario
 2. **sendDepositNotification** - Envía notificación cuando se recibe dinero
+
+### Credit Score & User Services
+3. **getCreditScoreByPhone** - Busca usuario por teléfono y retorna credit score e información crediticia
+
+## Credit Score Service - getCreditScoreByPhone
+
+### Descripción
+Endpoint para agentes de WhatsApp que permite buscar un usuario por su número de teléfono y obtener su información de credit score.
+
+### Endpoint
+```
+https://us-central1-capitalonehackmty.cloudfunctions.net/getCreditScoreByPhone
+```
+
+### Normalización de Teléfono
+- Los números de WhatsApp mexicanos incluyen un "1" extra que **no está en la base de datos**
+- El endpoint automáticamente normaliza el número:
+  - WhatsApp: `5218120394578` → Base de datos: `528120394578`
+
+### Request
+```json
+{
+  "data": {
+    "phoneNumber": "5218120394578"
+  }
+}
+```
+
+### Response (Usuario encontrado)
+```json
+{
+  "success": true,
+  "found": true,
+  "user": {
+    "firstName": "Marcelo",
+    "lastName": "García",
+    "fullName": "Marcelo García",
+    "phoneNumber": "528120394578"
+  },
+  "creditScore": {
+    "score": 730,
+    "category": "Good",
+    "description": "Buen historial crediticio. Buenas opciones de préstamos disponibles.",
+    "loanLimit": 50000,
+    "interestRate": "10-14%",
+    "minScore": 670,
+    "maxScore": 739
+  },
+  "executionTime": "245ms",
+  "timestamp": "2025-10-26T10:30:00.000Z"
+}
+```
+
+### Response (Usuario no encontrado)
+```json
+{
+  "success": true,
+  "found": false,
+  "message": "Usuario no encontrado con este número de teléfono",
+  "phoneNumber": "528120394578",
+  "executionTime": "120ms"
+}
+```
+
+### Clasificación de Credit Score
+
+El sistema clasifica el credit score en **5 grupos**:
+
+1. **Excellent** (800-850)
+   - Excelente historial crediticio
+   - Límite de préstamo: $100,000
+   - Tasa de interés: 5-7%
+
+2. **Very Good** (740-799)
+   - Muy buen historial crediticio
+   - Límite de préstamo: $75,000
+   - Tasa de interés: 7-10%
+
+3. **Good** (670-739)
+   - Buen historial crediticio
+   - Límite de préstamo: $50,000
+   - Tasa de interés: 10-14%
+
+4. **Fair** (580-669)
+   - Historial crediticio regular
+   - Límite de préstamo: $25,000
+   - Tasa de interés: 14-18%
+
+5. **Poor** (300-579)
+   - Historial crediticio necesita mejora
+   - Límite de préstamo: $5,000
+   - Tasa de interés: 18-25%
+
+### Cálculo del Credit Score
+
+El credit score se calcula basándose en 4 factores principales:
+
+1. **Préstamos** (40% - hasta 240 puntos)
+   - +50 puntos por cada préstamo aprobado (máximo 200 puntos)
+   - -30 puntos por cada préstamo rechazado
+
+2. **Balance Total** (30% - hasta 180 puntos)
+   - +10 puntos por cada $1,000 de balance (máximo 180 puntos)
+
+3. **Historial de Transacciones** (20% - hasta 120 puntos)
+   - +2 puntos por cada transacción (máximo 120 puntos)
+
+4. **Antigüedad de Cuenta** (10% - hasta 60 puntos)
+   - +10 puntos por cada mes de antigüedad (máximo 60 puntos)
+
+**Score mínimo**: 300 puntos (base)
+**Score máximo**: 850 puntos
+
+### Ejemplo de Uso desde Cliente
+
+```javascript
+// Llamar al endpoint desde React Native o cualquier cliente
+const response = await fetch(
+  'https://us-central1-capitalonehackmty.cloudfunctions.net/getCreditScoreByPhone',
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      data: {
+        phoneNumber: '5218120394578', // Formato WhatsApp (con el 1 extra)
+      },
+    }),
+  }
+);
+
+const result = await response.json();
+
+if (result.result.found) {
+  console.log(`Usuario: ${result.result.user.fullName}`);
+  console.log(`Credit Score: ${result.result.creditScore.score}`);
+  console.log(`Categoría: ${result.result.creditScore.category}`);
+  console.log(`Límite de préstamo: $${result.result.creditScore.loanLimit}`);
+} else {
+  console.log('Usuario no encontrado');
+}
+```
 
 ## Futuras Implementaciones
 
