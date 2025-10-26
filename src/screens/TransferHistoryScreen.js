@@ -12,7 +12,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { getUserProfile, getUserTransactions } from '../services/firestoreService';
-import { getCustomerAccounts, getAccountTransfers } from '../services/nessieService';
 import StandardHeader from '../components/StandardHeader';
 
 const TransferHistoryScreen = ({ navigation }) => {
@@ -77,63 +76,6 @@ const TransferHistoryScreen = ({ navigation }) => {
     }
   };
 
-  // 🔄 Versión original usando Nessie (mantener por compatibilidad)
-  const loadTransfers = async () => {
-    try {
-      if (!user) return;
-
-      // 1. Obtener datos del usuario (Firestore) - SOLO para obtener nessieCustomerId
-      const userProfileDoc = await getUserProfile(user.uid);
-      if (!userProfileDoc.exists()) {
-        setTransfers([]);
-        setLoading(false);
-        return;
-      }
-
-      const userData = userProfileDoc.data();
-      if (!userData || !userData.nessieCustomerId) {
-        setTransfers([]);
-        setLoading(false);
-        return;
-      }
-
-      // 2. Obtener cuentas del usuario (Nessie API)
-      const accounts = await getCustomerAccounts(userData.nessieCustomerId);
-      if (accounts.length === 0) {
-        setTransfers([]);
-        setLoading(false);
-        return;
-      }
-
-      // 3. Obtener transferencias de TODAS las cuentas del usuario (SOLO API)
-      const allTransfersPromises = accounts.map(account =>
-        getAccountTransfers(account._id)
-      );
-
-      const allTransfersArrays = await Promise.all(allTransfersPromises);
-
-      // 4. Combinar y formatear todas las transferencias
-      const allTransfers = allTransfersArrays
-        .flat()
-        .map((transfer, index) => ({
-          id: transfer._id || `transfer-${index}`,
-          ...transfer
-        }))
-        .sort((a, b) => {
-          // Ordenar por fecha (más reciente primero)
-          const dateA = new Date(a.transaction_date || 0);
-          const dateB = new Date(b.transaction_date || 0);
-          return dateB - dateA;
-        });
-
-      setTransfers(allTransfers);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error loading transfers:', error);
-      setTransfers([]);
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
     loadTransfersWithFirebase(); // 🔥 Usar Firebase

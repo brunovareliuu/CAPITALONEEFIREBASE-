@@ -21,7 +21,6 @@ import { CommonActions } from '@react-navigation/native';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { createUserProfile } from '../services/firestoreService';
-import { createNessieCustomer } from '../services/nessieService';
 import { sendWelcomeMessage } from '../services/whatsappService';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 
@@ -804,9 +803,6 @@ const SignUpScreen = ({ navigation }) => {
     setLoading(true);
     setError('');
 
-    let nessieCustomerId = null;
-    let nessieStatus = 'pending'; // pending, completed, failed
-
     try {
       // Step 1: Create user in Firebase Auth FIRST to get UID
       console.log('Creating Firebase user first...');
@@ -819,31 +815,6 @@ const SignUpScreen = ({ navigation }) => {
       const firebaseUID = userCredential.user.uid;
       console.log('Firebase user created with UID:', firebaseUID);
 
-      // Step 2: Try to create customer in Nessie API (but don't fail if it doesn't work)
-      console.log('Attempting to create customer in Nessie API...');
-      try {
-        const nessieCustomer = await createNessieCustomer({
-          first_name: formData.first_name,
-          last_name: formData.last_name,
-          address: {
-            street_number: formData.street_number,
-            street_name: formData.street_name,
-            city: formData.city,
-            state: formData.state,
-            zip: formData.zip,
-          },
-        });
-
-        nessieCustomerId = nessieCustomer.objectCreated._id;
-        nessieStatus = 'completed';
-        console.log('Nessie customer created with ID:', nessieCustomerId);
-
-      } catch (nessieError) {
-        console.warn('Nessie API failed, but continuing with Firebase registration:', nessieError.message);
-        nessieStatus = 'failed';
-        // No asignamos nessieCustomerId, quedará null
-      }
-
       // Step 3: Update Firebase user profile
       const displayName = `${formData.first_name} ${formData.last_name}`;
       await updateProfile(userCredential.user, {
@@ -855,22 +826,21 @@ const SignUpScreen = ({ navigation }) => {
       const formattedPhoneNumber = formData.countryCode.dialCode.replace('+', '') + formData.phoneNumber;
 
       await createUserProfile(firebaseUID, {
-        // === CAMPOS QUE GUARDABA FIREBASE ===
+        // === CAMPOS PRINCIPALES ===
         email: formData.email,
         password: formData.password, // Store password for reference
         uid: firebaseUID, // Firebase UID (identificador principal)
         phoneNumber: formattedPhoneNumber, // Phone number with country code
-        nessieCustomerId: nessieCustomerId, // Puede ser null si Nessie falló
         currency: formData.currency,
         completedAccountQuiz: false, // Usuario debe completar el quiz de cuenta
         createdAt: new Date(),
 
-        // === CAMPOS QUE GUARDABA NESSIE (información del customer) ===
+        // === INFORMACIÓN PERSONAL ===
         first_name: formData.first_name,
         last_name: formData.last_name,
         displayName: displayName, // Nombre completo para display
 
-        // Dirección completa (como la guardaba Nessie)
+        // Dirección completa
         address: {
           street_number: formData.street_number,
           street_name: formData.street_name,
@@ -887,9 +857,6 @@ const SignUpScreen = ({ navigation }) => {
         accountType: 'personal',
         lastLoginAt: new Date(),
 
-        // Estado de Nessie (nuevo campo para saber si está conectado)
-        nessieStatus: nessieStatus, // 'completed', 'failed', o 'pending'
-
         // Metadata del registro
         registrationMethod: 'email_password',
         registrationCompleted: true,
@@ -897,12 +864,6 @@ const SignUpScreen = ({ navigation }) => {
 
       console.log('User registration completed successfully in Firebase');
       console.log('Firebase UID:', firebaseUID);
-      console.log('Nessie Status:', nessieStatus);
-      if (nessieCustomerId) {
-        console.log('Nessie Customer ID:', nessieCustomerId);
-      } else {
-        console.log('Nessie Customer ID: Not available (Nessie API failed)');
-      }
       console.log('Phone Number:', formattedPhoneNumber);
       console.log('Complete profile saved to Firestore');
 

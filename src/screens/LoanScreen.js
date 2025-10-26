@@ -16,7 +16,6 @@ import { StatusBar } from 'expo-status-bar';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { getUserProfile, getCards, addCard, getLoans, addLoan } from '../services/firestoreService';
-import { updateAccountBalance } from '../services/nessieService';
 
 // Función para guardar loans en Firestore (ya que Nessie no tiene endpoint de loans)
 const saveLoanToFirestore = async (userId, loanData) => {
@@ -89,10 +88,8 @@ const LoanScreen = ({ navigation }) => {
           const profile = profileDoc.data();
           setUserProfile(profile);
 
-          // Load credit score
-          if (profile.nessieCustomerId) {
-            await loadCreditScore(profile.nessieCustomerId);
-          }
+          // Load credit score from Firestore or use default
+          await loadCreditScore();
 
           // Load credit cards using the callback pattern
           unsubscribeCards = getCards(user.uid, (userCards) => {
@@ -157,20 +154,13 @@ const LoanScreen = ({ navigation }) => {
     };
   }, [user]);
 
-  // Function to load credit score from Lambda
-  const loadCreditScore = async (nessieCustomerId) => {
+  // Function to load credit score (using static value for now)
+  const loadCreditScore = async () => {
     try {
-      const response = await fetch(
-        `https://thvr2tgikgzqwwjf7jud2p4z3q0ihgyf.lambda-url.us-east-2.on.aws/?id=${nessieCustomerId}`
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setCreditScore(data.credit_score);
-      } else {
-        console.error('Failed to load credit score');
-        setCreditScore(0);
-      }
+      // For now, use a static credit score
+      // TODO: Implement credit score calculation based on user data
+      const defaultCreditScore = 750; // Good credit score
+      setCreditScore(defaultCreditScore);
     } catch (error) {
       console.error('Error loading credit score:', error);
       setCreditScore(0);
@@ -334,30 +324,6 @@ const LoanScreen = ({ navigation }) => {
     }
   };
 
-  // Function to load user's loans
-  const loadLoans = async () => {
-    if (!userProfile?.nessieCustomerId) return;
-
-    try {
-      const NESSIE_API_KEY = 'cf56fb5b0f0c73969f042c7ad5457306';
-      const url = `http://api.nessieisreal.com/customers/${userProfile.nessieCustomerId}/loans?key=${NESSIE_API_KEY}`;
-
-      const response = await fetch(url);
-      if (response.ok) {
-        const loansData = await response.json();
-        setLoans(loansData || []);
-      }
-    } catch (error) {
-      console.error('Error loading loans:', error);
-    }
-  };
-
-  // Load loans on component mount
-  useEffect(() => {
-    if (userProfile) {
-      loadLoans();
-    }
-  }, [userProfile]);
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US', {

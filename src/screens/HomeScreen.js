@@ -22,7 +22,6 @@ import { StatusBar } from 'expo-status-bar';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../config/firebase';
 import { getCards, getExpenses, getCategories, getParticipants, getExpenseCategorizationsForCard, getUserProfile, getTarjetasDigitales, getAccountById, getUserAccounts } from '../services/firestoreService';
-import { getAccountBalance, getAccountPurchases, getAccountDeposits, getAccountTransfers, refreshAccountsBalances } from '../services/nessieService';
 import EventBus from '../utils/EventBus';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
@@ -177,38 +176,23 @@ const HomeScreen = ({ navigation }) => {
     return () => unsubscribe();
   }, [user]);
 
-  // Load account balance from Firestore or Nessie API (same as TarjetaDigitalDetails)
+  // Load account balance from Firestore
   useEffect(() => {
     const loadBalance = async () => {
-      if (tarjetaDigital?.nessieAccountId) {
+      if (tarjetaDigital?.accountId) {
         try {
-          const balance = await getAccountBalance(tarjetaDigital.nessieAccountId);
-            setTarjetaDigitalBalance(balance);
-          } catch (error) {
-            console.error('Error loading balance from Nessie API:', error);
-            // Fallback to stored balance
-          setTarjetaDigitalBalance(tarjetaDigital.saldo || 0);
-          }
-        } else if (tarjetaDigital?.accountId) {
-          // Load from Firestore if we have Firebase account ID
-          try {
-            console.log('🔥 Fetching balance from Firestore for account:', tarjetaDigital.accountId);
-            const accountDoc = await getAccountById(tarjetaDigital.accountId);
-            if (accountDoc.exists()) {
-              const accountData = accountDoc.data();
-              const balance = accountData.balance || 0;
-              console.log('💰 Real balance from Firestore:', balance);
-              setTarjetaDigitalBalance(balance);
-            } else {
-              console.log('❌ Account not found in Firestore, using stored balance');
-              setTarjetaDigitalBalance(tarjetaDigital.saldo || 0);
-            }
-          } catch (error) {
-            console.error('❌ Error loading balance from Firestore:', error);
+          const accountDoc = await getAccountById(tarjetaDigital.accountId);
+          if (accountDoc.exists()) {
+            const accountData = accountDoc.data();
+            setTarjetaDigitalBalance(accountData.balance || 0);
+          } else {
             setTarjetaDigitalBalance(tarjetaDigital.saldo || 0);
           }
-        } else {
-          // Fallback to stored balance if no account IDs
+        } catch (error) {
+          console.error('Error loading balance:', error);
+          setTarjetaDigitalBalance(tarjetaDigital.saldo || 0);
+        }
+      } else {
         setTarjetaDigitalBalance(tarjetaDigital?.saldo || 0);
       }
     };
@@ -218,33 +202,20 @@ const HomeScreen = ({ navigation }) => {
     }
   }, [tarjetaDigital]);
 
-  // Load savings account balance from Firestore or Nessie API
+  // Load savings account balance from Firestore
   useEffect(() => {
     const loadSavingsBalance = async () => {
-      if (savingsCard?.nessieAccountId) {
+      if (savingsCard?.accountId) {
         try {
-          const balance = await getAccountBalance(savingsCard.nessieAccountId);
-          setSavingsCardBalance(balance);
-        } catch (error) {
-          console.error('Error loading savings card balance:', error);
-          setSavingsCardBalance(savingsCard?.saldo || 0);
-        }
-      } else if (savingsCard?.accountId) {
-        // Load from Firestore if we have Firebase account ID
-        try {
-          console.log('🔥 Fetching savings balance from Firestore for account:', savingsCard.accountId);
           const accountDoc = await getAccountById(savingsCard.accountId);
           if (accountDoc.exists()) {
             const accountData = accountDoc.data();
-            const balance = accountData.balance || 0;
-            console.log('💰 Real savings balance from Firestore:', balance);
-            setSavingsCardBalance(balance);
+            setSavingsCardBalance(accountData.balance || 0);
           } else {
-            console.log('❌ Savings account not found in Firestore, using stored balance');
             setSavingsCardBalance(savingsCard?.saldo || 0);
           }
         } catch (error) {
-          console.error('❌ Error loading savings balance from Firestore:', error);
+          console.error('Error loading savings balance:', error);
           setSavingsCardBalance(savingsCard?.saldo || 0);
         }
       } else {
@@ -267,12 +238,10 @@ const HomeScreen = ({ navigation }) => {
         const accountDoc = await getAccountById(tarjetaDigital.accountId);
         if (accountDoc.exists()) {
           const accountData = accountDoc.data();
-          const balance = accountData.balance || 0;
-          setTarjetaDigitalBalance(balance);
-          console.log('💰 Force refreshed tarjetaDigital balance:', balance);
+          setTarjetaDigitalBalance(accountData.balance || 0);
         }
       } catch (error) {
-        console.error('❌ Error force refreshing tarjetaDigital:', error);
+        console.error('Error refreshing tarjetaDigital balance:', error);
       }
     }
 
@@ -282,19 +251,16 @@ const HomeScreen = ({ navigation }) => {
         const accountDoc = await getAccountById(savingsCard.accountId);
         if (accountDoc.exists()) {
           const accountData = accountDoc.data();
-          const balance = accountData.balance || 0;
-          setSavingsCardBalance(balance);
-          console.log('💰 Force refreshed savingsCard balance:', balance);
+          setSavingsCardBalance(accountData.balance || 0);
         }
       } catch (error) {
-        console.error('❌ Error force refreshing savingsCard:', error);
+        console.error('Error refreshing savingsCard balance:', error);
       }
     }
 
-    // Refresh creditCard balance (from user accounts)
+    // Refresh creditCard balance
     if (creditCard?.id) {
       try {
-        // Get all user accounts and find the credit card account
         const userAccounts = await new Promise((resolve) => {
           const unsubscribe = getUserAccounts(user.uid, (accounts) => {
             unsubscribe();
@@ -306,10 +272,9 @@ const HomeScreen = ({ navigation }) => {
         );
         if (updatedCreditCard) {
           setCreditCard(updatedCreditCard);
-          console.log('💰 Force refreshed creditCard balance:', updatedCreditCard.balance || 0);
         }
       } catch (error) {
-        console.error('❌ Error force refreshing creditCard:', error);
+        console.error('Error refreshing creditCard balance:', error);
       }
     }
   }, [tarjetaDigital, savingsCard, creditCard, user]);
@@ -319,67 +284,35 @@ const HomeScreen = ({ navigation }) => {
     const handler = (data) => {
       if (!data) return;
 
-      console.log('🔥 Balance update event received:', data);
-      console.log('📋 Current tarjetaDigital accountId:', tarjetaDigital?.accountId);
-      console.log('📋 Current savingsCard accountId:', savingsCard?.accountId);
-
-      // Check tarjetaDigital balance updates (both Nessie and Firebase accounts)
-      if ((tarjetaDigital?.nessieAccountId === data.accountId || tarjetaDigital?.accountId === data.accountId) && typeof data.newBalance === 'number') {
-        console.log('💰 Updating tarjetaDigital balance:', data.newBalance);
+      // Check tarjetaDigital balance updates
+      if (tarjetaDigital?.accountId === data.accountId && typeof data.newBalance === 'number') {
         setTarjetaDigitalBalance(data.newBalance);
-        // Start short-lived polling to reconcile any late updates
-        setIsPolling(true);
       }
 
-      // Also check for savings account balance updates (both Nessie and Firebase accounts)
-      if ((savingsCard?.nessieAccountId === data.accountId || savingsCard?.accountId === data.accountId) && typeof data.newBalance === 'number') {
-        console.log('💰 Updating savingsCard balance:', data.newBalance);
+      // Check savings account balance updates
+      if (savingsCard?.accountId === data.accountId && typeof data.newBalance === 'number') {
         setSavingsCardBalance(data.newBalance);
       }
 
-      // Check for credit card balance updates (Firebase accounts only)
+      // Check credit card balance updates
       if (creditCard?.id === data.accountId && typeof data.newBalance === 'number') {
-        console.log('💰 Updating credit card balance:', data.newBalance);
-        // Update the credit card with new balance
         setCreditCard(prev => prev ? { ...prev, balance: data.newBalance } : null);
-      }
-
-      // If we received a balance update but didn't match any account, force refresh all balances
-      const matchedAnyAccount = (
-        (tarjetaDigital?.nessieAccountId === data.accountId || tarjetaDigital?.accountId === data.accountId) ||
-        (savingsCard?.nessieAccountId === data.accountId || savingsCard?.accountId === data.accountId) ||
-        (creditCard?.id === data.accountId)
-      );
-
-      if (!matchedAnyAccount && typeof data.newBalance === 'number') {
-        console.log('⚠️ Balance update received but no account matched, forcing refresh...');
-        // Small delay to allow Firestore to propagate changes
-        setTimeout(() => {
-          forceRefreshBalances();
-        }, 500);
       }
     };
     EventBus.on('balance:updated', handler);
     return () => EventBus.off('balance:updated', handler);
-  }, [tarjetaDigital, savingsCard, creditCard, forceRefreshBalances]);
+  }, [tarjetaDigital, savingsCard, creditCard]);
 
-  // Smart polling for a few seconds after an update or when screen is focused
+  // Smart polling for a few seconds after an update
   useEffect(() => {
-    if (!isPolling || (!tarjetaDigital?.nessieAccountId && !tarjetaDigital?.accountId)) return;
+    if (!isPolling || !tarjetaDigital?.accountId) return;
     let cancelled = false;
     const interval = setInterval(async () => {
       try {
-        if (tarjetaDigital?.nessieAccountId) {
-          // Use Nessie API for legacy accounts
-          const fresh = await getAccountBalance(tarjetaDigital.nessieAccountId);
-          if (!cancelled) setTarjetaDigitalBalance(fresh);
-        } else if (tarjetaDigital?.accountId) {
-          // Use Firestore for Firebase accounts
-          const accountDoc = await getAccountById(tarjetaDigital.accountId);
-          if (accountDoc.exists() && !cancelled) {
-            const accountData = accountDoc.data();
-            setTarjetaDigitalBalance(accountData.balance || 0);
-          }
+        const accountDoc = await getAccountById(tarjetaDigital.accountId);
+        if (accountDoc.exists() && !cancelled) {
+          const accountData = accountDoc.data();
+          setTarjetaDigitalBalance(accountData.balance || 0);
         }
       } catch (_e) {}
     }, 2000);
@@ -394,12 +327,7 @@ const HomeScreen = ({ navigation }) => {
       const reload = async () => {
 
         // Refresh tarjetaDigital balance
-        if (tarjetaDigital?.nessieAccountId) {
-          try {
-            const fresh = await getAccountBalance(tarjetaDigital.nessieAccountId);
-            if (mounted) setTarjetaDigitalBalance(fresh);
-          } catch (_e) {}
-        } else if (tarjetaDigital?.accountId) {
+        if (tarjetaDigital?.accountId) {
           try {
             const accountDoc = await getAccountById(tarjetaDigital.accountId);
             if (accountDoc.exists() && mounted) {
@@ -410,12 +338,7 @@ const HomeScreen = ({ navigation }) => {
         }
 
         // Refresh savingsCard balance
-        if (savingsCard?.nessieAccountId) {
-          try {
-            const fresh = await getAccountBalance(savingsCard.nessieAccountId);
-            if (mounted) setSavingsCardBalance(fresh);
-          } catch (_e) {}
-        } else if (savingsCard?.accountId) {
+        if (savingsCard?.accountId) {
           try {
             const accountDoc = await getAccountById(savingsCard.accountId);
             if (accountDoc.exists() && mounted) {
@@ -448,142 +371,41 @@ const HomeScreen = ({ navigation }) => {
     }, [tarjetaDigital, savingsCard, creditCard, user])
   );
 
-  // Load recent activities from Nessie API
+  // Load recent activities (mock data)
   useEffect(() => {
-    const loadActivities = async () => {
-      if (tarjetaDigital?.nessieAccountId) {
-        try {
-          // Load recent activities (purchases, deposits and transfers)
-          const [purchases, deposits, transfers] = await Promise.all([
-            getAccountPurchases(tarjetaDigital.nessieAccountId),
-            getAccountDeposits(tarjetaDigital.nessieAccountId),
-            getAccountTransfers(tarjetaDigital.nessieAccountId)
-          ]);
-
-          // Combine and format recent activities (last 3)
-          const activities = [];
-
-          purchases.slice(0, 1).forEach(purchase => {
-            activities.push({
-              id: purchase._id,
-              type: 'purchase',
-              title: purchase.description || 'Purchase',
-              subtitle: formatDate(purchase.purchase_date),
-              amount: -Math.abs(purchase.amount),
-              icon: 'shopping-cart',
-              color: '#FFEBEE',
-              iconColor: '#F44336'
-            });
-          });
-
-          deposits.slice(0, 1).forEach(deposit => {
-            activities.push({
-              id: deposit._id,
-              type: 'deposit',
-              title: deposit.description || 'Deposit',
-              subtitle: formatDate(deposit.transaction_date),
-              amount: Math.abs(deposit.amount),
-              icon: 'briefcase',
-              color: '#E3F2FD',
-              iconColor: '#1976D2'
-            });
-          });
-
-          transfers.slice(0, 1).forEach(transfer => {
-            // Determinar correctamente si es ingreso o gasto basado en payer/payee
-            const isIncoming = tarjetaDigital.nessieAccountId === transfer.payee_id;
-            const isOutgoing = tarjetaDigital.nessieAccountId === transfer.payer_id;
-            activities.push({
-              id: transfer._id,
-              type: isIncoming ? 'transfer_in' : 'transfer_out',
-              title: transfer.description || (isIncoming ? 'Money Received' : 'Money Sent'),
-              subtitle: formatDate(transfer.transaction_date),
-              amount: isIncoming ? Math.abs(transfer.amount) : -Math.abs(transfer.amount),
-              icon: 'paper-plane',
-              color: isIncoming ? '#E8F5E8' : '#FFEBEE',
-              iconColor: isIncoming ? '#4CAF50' : '#F44336'
-            });
-          });
-
-          // Sort by date and take first 3
-          activities.sort((a, b) => new Date(b.date) - new Date(a.date));
-          setRecentActivities(activities.slice(0, 3));
-
-        } catch (error) {
-          console.error('Error loading activities from Nessie API:', error);
-          // Fallback to mock activities
-          setRecentActivities([
-            {
-              id: '1',
-              type: 'purchase',
-              title: 'Starbucks Purchase',
-              subtitle: 'Hace 2 horas',
-              amount: -12.50,
-              icon: 'shopping-cart',
-              color: '#FFEBEE',
-              iconColor: '#F44336'
-            },
-            {
-              id: '2',
-              type: 'deposit',
-              title: 'Payroll Deposit',
-              subtitle: 'Ayer',
-              amount: 2500.00,
-              icon: 'briefcase',
-              color: '#E3F2FD',
-              iconColor: '#1976D2'
-            },
-            {
-              id: '3',
-              type: 'purchase',
-              title: 'Uber',
-              subtitle: 'Hace 3 días',
-              amount: -25.00,
-              icon: 'car',
-              color: '#F3E5F5',
-              iconColor: '#7B1FA2'
-            }
-          ]);
-        }
-      } else {
-        // Fallback to mock activities if no nessieAccountId
-        setRecentActivities([
-          {
-            id: '1',
-            type: 'purchase',
-            title: 'Starbucks Purchase',
-            subtitle: 'Hace 2 horas',
-            amount: -12.50,
-            icon: 'shopping-cart',
-            color: '#E8F5E8',
-            iconColor: '#388E3C'
-          },
-          {
-            id: '2',
-            type: 'deposit',
-            title: 'Payroll Deposit',
-            subtitle: 'Ayer',
-            amount: 2500.00,
-            icon: 'briefcase',
-            color: '#E3F2FD',
-            iconColor: '#1976D2'
-          },
-          {
-            id: '3',
-            type: 'purchase',
-            title: 'Uber',
-            subtitle: 'Hace 3 días',
-            amount: -25.00,
-            icon: 'car',
-            color: '#F3E5F5',
-            iconColor: '#7B1FA2'
-          }
-        ]);
-      }
-    };
-
     if (tarjetaDigital) {
-      loadActivities();
+      setRecentActivities([
+        {
+          id: '1',
+          type: 'purchase',
+          title: 'Starbucks Purchase',
+          subtitle: 'Hace 2 horas',
+          amount: -12.50,
+          icon: 'shopping-cart',
+          color: '#FFEBEE',
+          iconColor: '#F44336'
+        },
+        {
+          id: '2',
+          type: 'deposit',
+          title: 'Payroll Deposit',
+          subtitle: 'Ayer',
+          amount: 2500.00,
+          icon: 'briefcase',
+          color: '#E3F2FD',
+          iconColor: '#1976D2'
+        },
+        {
+          id: '3',
+          type: 'purchase',
+          title: 'Uber',
+          subtitle: 'Hace 3 días',
+          amount: -25.00,
+          icon: 'car',
+          color: '#F3E5F5',
+          iconColor: '#7B1FA2'
+        }
+      ]);
     }
   }, [tarjetaDigital]);
 
@@ -592,72 +414,52 @@ const HomeScreen = ({ navigation }) => {
     if (!user || !tarjetaDigital || dataRefreshTrigger === 0) return;
 
     const refreshBalanceAndActivities = async () => {
-      if (tarjetaDigital.nessieAccountId) {
+      // Refresh balance from Firestore
+      if (tarjetaDigital?.accountId) {
         try {
-          // Load updated balance (same as TarjetaDigitalDetails)
-          const balance = await getAccountBalance(tarjetaDigital.nessieAccountId);
-          setTarjetaDigitalBalance(balance);
-
-          // Load updated recent activities
-          const [purchases, deposits, transfers] = await Promise.all([
-            getAccountPurchases(tarjetaDigital.nessieAccountId),
-            getAccountDeposits(tarjetaDigital.nessieAccountId),
-            getAccountTransfers(tarjetaDigital.nessieAccountId)
-          ]);
-
-          // Combine and format recent activities (last 3)
-          const activities = [];
-
-          purchases.slice(0, 1).forEach(purchase => {
-            activities.push({
-              id: purchase._id,
-              type: 'purchase',
-              title: purchase.description || 'Purchase',
-              subtitle: formatDate(purchase.purchase_date),
-              amount: -Math.abs(purchase.amount),
-              icon: 'shopping-cart',
-              color: '#FFEBEE',
-              iconColor: '#F44336'
-            });
-          });
-
-          deposits.slice(0, 1).forEach(deposit => {
-            activities.push({
-              id: deposit._id,
-              type: 'deposit',
-              title: deposit.description || 'Deposit',
-              subtitle: formatDate(deposit.transaction_date),
-              amount: Math.abs(deposit.amount),
-              icon: 'briefcase',
-              color: '#E3F2FD',
-              iconColor: '#1976D2'
-            });
-          });
-
-          transfers.slice(0, 1).forEach(transfer => {
-            // Determinar correctamente si es ingreso o gasto basado en payer/payee
-            const isIncoming = tarjetaDigital.nessieAccountId === transfer.payee_id;
-            const isOutgoing = tarjetaDigital.nessieAccountId === transfer.payer_id;
-            activities.push({
-              id: transfer._id,
-              type: isIncoming ? 'transfer_in' : 'transfer_out',
-              title: transfer.description || (isIncoming ? 'Money Received' : 'Money Sent'),
-              subtitle: formatDate(transfer.transaction_date),
-              amount: isIncoming ? Math.abs(transfer.amount) : -Math.abs(transfer.amount),
-              icon: 'paper-plane',
-              color: isIncoming ? '#E8F5E8' : '#FFEBEE',
-              iconColor: isIncoming ? '#4CAF50' : '#F44336'
-            });
-          });
-
-          // Sort by date and take first 3
-          activities.sort((a, b) => new Date(b.date) - new Date(a.date));
-          setRecentActivities(activities.slice(0, 3));
-
+          const accountDoc = await getAccountById(tarjetaDigital.accountId);
+          if (accountDoc.exists()) {
+            const accountData = accountDoc.data();
+            setTarjetaDigitalBalance(accountData.balance || 0);
+          }
         } catch (error) {
-          console.error('Error refreshing data from Nessie API:', error);
+          console.error('Error refreshing balance:', error);
         }
       }
+
+      // Keep same mock activities
+      setRecentActivities([
+        {
+          id: '1',
+          type: 'purchase',
+          title: 'Starbucks Purchase',
+          subtitle: 'Hace 2 horas',
+          amount: -12.50,
+          icon: 'shopping-cart',
+          color: '#FFEBEE',
+          iconColor: '#F44336'
+        },
+        {
+          id: '2',
+          type: 'deposit',
+          title: 'Payroll Deposit',
+          subtitle: 'Ayer',
+          amount: 2500.00,
+          icon: 'briefcase',
+          color: '#E3F2FD',
+          iconColor: '#1976D2'
+        },
+        {
+          id: '3',
+          type: 'purchase',
+          title: 'Uber',
+          subtitle: 'Hace 3 días',
+          amount: -25.00,
+          icon: 'car',
+          color: '#F3E5F5',
+          iconColor: '#7B1FA2'
+        }
+      ]);
     };
 
     refreshBalanceAndActivities();
@@ -876,37 +678,25 @@ const HomeScreen = ({ navigation }) => {
       console.log('🔄 Starting refresh of all user data...');
 
       // Refresh digital card balance
-      if (tarjetaDigital) {
-        if (tarjetaDigital?.nessieAccountId) {
-          const balance = await getAccountBalance(tarjetaDigital.nessieAccountId);
+      if (tarjetaDigital?.accountId) {
+        // Refresh balance from Firestore
+        const accountDoc = await getAccountById(tarjetaDigital.accountId);
+        if (accountDoc.exists()) {
+          const accountData = accountDoc.data();
+          const balance = accountData.balance || 0;
           setTarjetaDigitalBalance(balance);
-          console.log('✅ Refreshed tarjetaDigital balance from Nessie:', balance);
-        } else if (tarjetaDigital?.accountId) {
-          // Refresh balance from Firestore for Firebase accounts
-          const accountDoc = await getAccountById(tarjetaDigital.accountId);
-          if (accountDoc.exists()) {
-            const accountData = accountDoc.data();
-            const balance = accountData.balance || 0;
-            setTarjetaDigitalBalance(balance);
-            console.log('✅ Refreshed tarjetaDigital balance from Firestore:', balance);
-          }
+          console.log('✅ Refreshed tarjetaDigital balance from Firestore:', balance);
         }
       }
 
       // Refresh savings account balance
-      if (savingsCard) {
-        if (savingsCard?.nessieAccountId) {
-          const balance = await getAccountBalance(savingsCard.nessieAccountId);
+      if (savingsCard?.accountId) {
+        const accountDoc = await getAccountById(savingsCard.accountId);
+        if (accountDoc.exists()) {
+          const accountData = accountDoc.data();
+          const balance = accountData.balance || 0;
           setSavingsCardBalance(balance);
-          console.log('✅ Refreshed savingsCard balance from Nessie:', balance);
-        } else if (savingsCard?.accountId) {
-          const accountDoc = await getAccountById(savingsCard.accountId);
-          if (accountDoc.exists()) {
-            const accountData = accountDoc.data();
-            const balance = accountData.balance || 0;
-            setSavingsCardBalance(balance);
-            console.log('✅ Refreshed savingsCard balance from Firestore:', balance);
-          }
+          console.log('✅ Refreshed savingsCard balance from Firestore:', balance);
         }
       }
 
@@ -927,71 +717,17 @@ const HomeScreen = ({ navigation }) => {
         }
       }
 
-      // Refresh balances for all regular cards that have Nessie account IDs
-      const cardsWithNessieIds = cards.filter(card => card.nessieAccountId);
-      if (cardsWithNessieIds.length > 0) {
-        const accountIds = cardsWithNessieIds.map(card => card.nessieAccountId);
+      // Refresh balances for all regular cards (using Firebase)
+      const cardsWithAccountIds = cards.filter(card => card.accountId);
+      if (cardsWithAccountIds.length > 0) {
+        const accountIds = cardsWithAccountIds.map(card => card.accountId);
         await refreshAccountsBalances(accountIds);
         console.log('✅ Refreshed regular cards balances');
       }
 
-      // Refresh recent activities for Nessie accounts
-      if (tarjetaDigital?.nessieAccountId) {
-        const [purchases, deposits, transfers] = await Promise.all([
-          getAccountPurchases(tarjetaDigital.nessieAccountId),
-          getAccountDeposits(tarjetaDigital.nessieAccountId),
-          getAccountTransfers(tarjetaDigital.nessieAccountId)
-        ]);
-
-        const activities = [];
-        purchases.slice(0, 1).forEach(purchase => {
-          activities.push({
-            id: purchase._id,
-            type: 'purchase',
-            title: purchase.description || 'Purchase',
-            subtitle: formatDate(purchase.purchase_date),
-            amount: -Math.abs(purchase.amount),
-            icon: 'shopping-cart',
-            color: '#FFEBEE',
-            iconColor: '#F44336'
-          });
-        });
-
-        deposits.slice(0, 1).forEach(deposit => {
-          activities.push({
-            id: deposit._id,
-            type: 'deposit',
-            title: deposit.description || 'Deposit',
-            subtitle: formatDate(deposit.transaction_date),
-            amount: Math.abs(deposit.amount),
-            icon: 'briefcase',
-            color: '#E3F2FD',
-            iconColor: '#1976D2'
-          });
-        });
-
-        transfers.slice(0, 1).forEach(transfer => {
-          // Determinar si es ingreso (recibido) o gasto (enviado)
-          const isIncoming = transfer.amount > 0;
-          activities.push({
-            id: transfer._id,
-            type: isIncoming ? 'transfer_in' : 'transfer_out',
-            title: transfer.description || (isIncoming ? 'Money Received' : 'Money Sent'),
-            subtitle: formatDate(transfer.transaction_date),
-            amount: isIncoming ? Math.abs(transfer.amount) : -Math.abs(transfer.amount),
-            icon: 'paper-plane',
-            color: isIncoming ? '#E8F5E8' : '#FFEBEE',
-            iconColor: isIncoming ? '#4CAF50' : '#F44336'
-          });
-        });
-
-        activities.sort((a, b) => new Date(b.date) - new Date(a.date));
-        setRecentActivities(activities.slice(0, 3));
-        console.log('✅ Refreshed recent activities');
-      } else {
-        // For Firebase accounts, clear activities for now
-        setRecentActivities([]);
-      }
+      // TODO: Refresh recent activities from Firebase transactions
+      // For now, clear activities
+      setRecentActivities([]);
 
       console.log('✅ All data refresh completed');
 

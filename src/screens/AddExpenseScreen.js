@@ -15,8 +15,7 @@ import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { db } from '../config/firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { getCards, getCategories, addExpense, payCreditCard, addPendingTransaction, getUserProfile } from '../services/firestoreService';
-import { getAccountBalance, createPurchase } from '../services/nessieService'; // Importa las funciones del servicio
+import { getCards, getCategories, addExpense, payCreditCard, addPendingTransaction, getUserProfile, getAccountById, updateAccount } from '../services/firestoreService';
 import { useAuth } from '../context/AuthContext';
 
 const dateIdLocal = (d = new Date()) => {
@@ -47,18 +46,26 @@ const AddExpenseScreen = ({ navigation }) => {
       setUserCards(cards);
       setCardsLoading(false);
 
-      // Cargar balances desde API para todas las tarjetas
+      // Cargar balances desde Firebase para todas las tarjetas
       const balances = {};
       for (const card of cards) {
-        if (card.nessieAccountId) {
+        if (card.accountId) {
           try {
-            const balance = await getAccountBalance(card.nessieAccountId);
-            balances[card.id] = balance;
+            // Obtener balance desde la cuenta de Firebase
+            const accountDoc = await getAccountById(card.accountId);
+            if (accountDoc.exists()) {
+              const accountData = accountDoc.data();
+              balances[card.id] = accountData.balance || 0;
+            } else {
+              balances[card.id] = 0;
+            }
           } catch (error) {
             console.error(`Error getting balance for card ${card.id}:`, error);
-            // Fallback: usar balance calculado localmente
-            balances[card.id] = getCardBalance(card.id);
+            balances[card.id] = 0;
           }
+        } else {
+          // Fallback: usar balance calculado localmente
+          balances[card.id] = getCardBalance(card.id);
         }
       }
       setCardBalances(balances);
@@ -164,47 +171,52 @@ const AddExpenseScreen = ({ navigation }) => {
       const cleanAmount = formData.amount.replace(/,/g, '');
       const amount = parseFloat(cleanAmount);
 
-      // Buscar la tarjeta seleccionada para obtener el nessieAccountId
+      // Buscar la tarjeta seleccionada
       const selectedCard = userCards.find(card => card.id === formData.selectedCard);
-      if (!selectedCard || !selectedCard.nessieAccountId) {
+      if (!selectedCard || !selectedCard.accountId) {
         Alert.alert('Error', 'Selected card is not properly configured.');
         return;
       }
 
-      // 1. Crear la purchase en la API de Nessie (directamente como completed)
-      console.log('🛒 Creating purchase for card:', selectedCard.nessieAccountId);
-      const nessieResult = await createPurchase(
-        selectedCard.nessieAccountId,
-        amount,
-        formData.description || 'Purchase'
-      );
-      console.log('✅ Purchase created:', nessieResult);
+      // 1. Obtener el balance actual de la cuenta
+      const accountDoc = await getAccountById(selectedCard.accountId);
+      if (!accountDoc.exists()) {
+        Alert.alert('Error', 'Account not found.');
+        return;
+      }
 
-      // 2. Guardar la información adicional en Firestore
+      const accountData = accountDoc.data();
+      const currentBalance = accountData.balance || 0;
+
+      // Verificar que hay suficiente balance
+      if (currentBalance < amount) {
+        Alert.alert('Error', 'Insufficient balance for this purchase.');
+        return;
+      }
+
+      // 2. Actualizar el balance de la cuenta
+      const newBalance = currentBalance - amount;
+      await updateAccount(selectedCard.accountId, {
+        balance: newBalance,
+        updatedAt: new Date()
+      });
+
+      // 3. Guardar la transacción en Firestore
       const transactionData = {
         amount: -amount, // Negativo para expenses
         description: formData.description || 'Purchase',
         date: dateIdLocal(), // YYYY-MM-DD (local)
         timestamp: new Date(),
-        status: 'completed', // Ya que la purchase se completó en Nessie
-        nessiePurchaseId: nessieResult?._id || null, // Guardar el ID de Nessie (o null si falla)
+        status: 'completed',
+        accountId: selectedCard.accountId,
       };
       console.log('💾 Transaction data to save:', transactionData);
 
       await addExpense(user.uid, formData.selectedCard, transactionData);
 
-      // 3. POLLING AGRESIVO: Trigger múltiples refreshes para asegurar que la purchase aparezca
-      console.log('🔄 Starting aggressive polling for purchase...');
-      triggerDataRefresh(); // Inmediato
-      
-      // Polling cada 1 segundo por 5 segundos
-      const pollIntervals = [1000, 2000, 3000, 4000, 5000];
-      pollIntervals.forEach(delay => {
-        setTimeout(() => {
-          console.log(`🔄 Polling refresh at ${delay}ms`);
-          triggerDataRefresh();
-        }, delay);
-      });
+      // 3. Trigger refresh para actualizar la UI
+      console.log('🔄 Refreshing data after purchase...');
+      triggerDataRefresh();
 
       Alert.alert(
         'Purchase Completed',
@@ -232,16 +244,19 @@ const AddExpenseScreen = ({ navigation }) => {
 
     // Buscar la tarjeta seleccionada
     const selectedCard = userCards.find(card => card.id === cardId);
-    if (selectedCard && selectedCard.nessieAccountId) {
+    if (selectedCard && selectedCard.accountId) {
       try {
-        // Obtener balance desde Nessie API
-        const balance = await getAccountBalance(selectedCard.nessieAccountId);
-        setCardBalances(prev => ({
-          ...prev,
-          [cardId]: balance
-        }));
+        // Obtener balance desde Firebase
+        const accountDoc = await getAccountById(selectedCard.accountId);
+        if (accountDoc.exists()) {
+          const accountData = accountDoc.data();
+          setCardBalances(prev => ({
+            ...prev,
+            [cardId]: accountData.balance || 0
+          }));
+        }
       } catch (error) {
-        console.error('Error getting balance from Nessie API:', error);
+        console.error('Error getting balance from Firebase:', error);
         // Fallback: usar balance calculado localmente
         const localBalance = getCardBalance(cardId);
         setCardBalances(prev => ({

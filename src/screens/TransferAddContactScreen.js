@@ -13,13 +13,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { validateAccountExists } from '../services/nessieService';
 import { saveContact, getContactByCLABE, findAccountByNumber } from '../services/firestoreService';
 import StandardHeader from '../components/StandardHeader';
 
 const TransferAddContactScreen = ({ navigation, route }) => {
   const { user } = useAuth();
-  const { tarjetaDigital, prefilledCLABE, prefilledNessieAccountId } = route.params || {};
+  const { tarjetaDigital, prefilledCLABE, prefilledAccountId } = route.params || {};
 
   console.log('🔥 TransferAddContactScreen - Route params:', route.params);
 
@@ -30,7 +29,7 @@ const TransferAddContactScreen = ({ navigation, route }) => {
   const [clabe, setClabe] = useState(prefilledCLABE || '');
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState('');
-  const [accountId, setAccountId] = useState(prefilledNessieAccountId || ''); // 🔥 Ahora es el ID de Firestore
+  const [accountId, setAccountId] = useState(prefilledAccountId || ''); // 🔥 Ahora es el ID de Firestore
   
   // Step 2: Name & Alias
   const [contactName, setContactName] = useState('');
@@ -148,8 +147,6 @@ const TransferAddContactScreen = ({ navigation, route }) => {
         contactAlias: contactAlias.trim(),
         contactCLABE: clabe,
         contactAccountId: accountId, // 🔥 Ahora es el ID de Firestore
-        // Mantenemos compatibilidad con versiones anteriores
-        contactNessieAccountId: accountId,
       };
 
       const contactId = await saveContact(user.uid, contactData);

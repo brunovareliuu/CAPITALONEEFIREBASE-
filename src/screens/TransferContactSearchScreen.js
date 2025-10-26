@@ -13,7 +13,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { getUserContacts, searchContactsByQuery, getContactByCLABE, findAccountByNumber } from '../services/firestoreService';
-import { validateAccountExists, getAccountById } from '../services/nessieService';
 import StandardHeader from '../components/StandardHeader';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -27,28 +26,14 @@ const TransferContactSearchScreen = ({ navigation, route }) => {
   const [recentContacts, setRecentContacts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isValidatingCLABE, setIsValidatingCLABE] = useState(false);
-  const [clabeValidation, setClabeValidation] = useState(null); // { valid: true/false, nessieAccountId: '...' }
+  const [clabeValidation, setClabeValidation] = useState(null); // { valid: true/false, accountId: '...' }
 
-  // Refresh debit account balance when screen focuses
-  useFocusEffect(
-    React.useCallback(() => {
-      let isActive = true;
-      const refreshBalance = async () => {
-        try {
-          if (tarjetaDigital?.nessieAccountId) {
-            const accountData = await getAccountById(tarjetaDigital.nessieAccountId);
-            if (isActive) {
-              setCurrentCard({ ...tarjetaDigital, saldo: accountData.balance, balance: accountData.balance });
-            }
-          }
-        } catch (err) {
-          // keep previous value on failure
-        }
-      };
-      refreshBalance();
-      return () => { isActive = false; };
-    }, [tarjetaDigital?.nessieAccountId])
-  );
+  // Set current card when component mounts
+  useEffect(() => {
+    if (tarjetaDigital) {
+      setCurrentCard(tarjetaDigital);
+    }
+  }, [tarjetaDigital]);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -101,7 +86,6 @@ const TransferContactSearchScreen = ({ navigation, route }) => {
         setClabeValidation({
           valid: true,
           accountId: validation.accountData.id, // 🔥 Ahora es el ID de Firestore
-          nessieAccountId: validation.accountData.id, // Mantener compatibilidad
           clabe: clabe
         });
       } else {
@@ -127,7 +111,7 @@ const TransferContactSearchScreen = ({ navigation, route }) => {
       navigation.navigate('TransferAddContact', {
         tarjetaDigital,
         prefilledCLABE: clabeValidation.clabe,
-        prefilledNessieAccountId: clabeValidation.accountId // 🔥 Ahora es accountId
+        prefilledAccountId: clabeValidation.accountId
       });
     }
   };

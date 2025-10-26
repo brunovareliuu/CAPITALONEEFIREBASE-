@@ -17,12 +17,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { getUserProfile, createTransaction, updateAccountBalance, createFirebaseTransfer } from '../services/firestoreService';
-import {
-  validateAccountExists,
-  createTransfer,
-  getCustomerAccounts,
-  getAccountBalance,
-} from '../services/nessieService';
 import EventBus from '../utils/EventBus';
 
 const TransferSavingsScreen = ({ navigation, route }) => {
@@ -42,26 +36,21 @@ const TransferSavingsScreen = ({ navigation, route }) => {
   // Quick amount presets
   const quickAmounts = [50, 100, 200, 500];
 
-  // Load real balances from Nessie API
+  // Load balances from Firestore
   useEffect(() => {
     const loadBalances = async () => {
-      if (!fromAccount?.nessieAccountId || !toAccount?.nessieAccountId) {
+      if (!fromAccount || !toAccount) {
         setLoadingBalances(false);
         return;
       }
 
       try {
         setLoadingBalances(true);
-        const [checkingBal, savingsBal] = await Promise.all([
-          getAccountBalance(fromAccount.nessieAccountId),
-          getAccountBalance(toAccount.nessieAccountId)
-        ]);
-
-        setCheckingBalance(checkingBal);
-        setSavingsBalance(savingsBal);
+        // Use balances from account objects (updated in real-time via EventBus)
+        setCheckingBalance(fromAccount?.balance || 0);
+        setSavingsBalance(toAccount?.balance || 0);
       } catch (error) {
         console.error('Error loading balances:', error);
-        // Fallback to stored balances
         setCheckingBalance(fromAccount?.balance || 0);
         setSavingsBalance(toAccount?.balance || 0);
       } finally {
@@ -77,12 +66,12 @@ const TransferSavingsScreen = ({ navigation, route }) => {
     const handleBalanceUpdate = (data) => {
       if (!data) return;
 
-      if (data.accountId === fromAccount?.nessieAccountId) {
+      if (data.accountId === fromAccount?.id) {
         setCheckingBalance(data.newBalance);
         setBalanceUpdated(true);
         // Reset indicator after 2 seconds
         setTimeout(() => setBalanceUpdated(false), 2000);
-      } else if (data.accountId === toAccount?.nessieAccountId) {
+      } else if (data.accountId === toAccount?.id) {
         setSavingsBalance(data.newBalance);
         setBalanceUpdated(true);
         // Reset indicator after 2 seconds
@@ -175,61 +164,6 @@ const TransferSavingsScreen = ({ navigation, route }) => {
     }
   };
 
-  // 🔄 Versión original usando Nessie (mantener por compatibilidad)
-  const executeTransfer = async () => {
-    setShowConfirmModal(false);
-    setTransferring(true);
-
-    try {
-      // 💰 Capturar los balances ANTES de la transferencia
-      const previousCheckingBalance = checkingBalance;
-      const previousSavingsBalance = savingsBalance;
-      const amt = parseFloat(amount);
-      const expectedCheckingNew = previousCheckingBalance - amt;
-      const expectedSavingsNew = previousSavingsBalance + amt;
-
-      console.log('💰 Transfer from Checking to Savings:', amt);
-      console.log('💰 Previous Checking balance:', previousCheckingBalance);
-      console.log('💰 Previous Savings balance:', previousSavingsBalance);
-
-      console.log('✈️ Creating internal transfer...');
-      const result = await createTransfer(
-        fromAccount.nessieAccountId, // checking account ID
-        toAccount.nessieAccountId,   // savings account ID
-        amt,
-        'balance', // always use balance for internal transfers
-        'Transfer to Savings' // automatic description
-      );
-      console.log('✅ Transfer created:', result);
-
-      // Emitir eventos para actualizar ambos balances
-      EventBus.emit('balance:updated', {
-        accountId: fromAccount.nessieAccountId,
-        newBalance: expectedCheckingNew,
-        timestamp: Date.now(),
-      });
-
-      EventBus.emit('balance:updated', {
-        accountId: toAccount.nessieAccountId,
-        newBalance: expectedSavingsNew,
-        timestamp: Date.now(),
-      });
-
-      // Navegar a confirmación
-      navigation.replace('TransferConfirmation', {
-        transfer: result,
-        previousBalance: previousCheckingBalance,
-        updatedPayerBalance: expectedCheckingNew,
-        amount: amt,
-      });
-
-    } catch (error) {
-      console.error('❌ Transfer error:', error);
-      Alert.alert('Transfer Failed', error.message || 'An error occurred during the transfer');
-    } finally {
-      setTransferring(false);
-    }
-  };
 
   // Show loading state while balances are loading
   if (loadingBalances) {

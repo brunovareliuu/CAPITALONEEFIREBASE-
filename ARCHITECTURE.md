@@ -8,53 +8,44 @@
 - **Integración**: Firebase Authentication
 - **Datos almacenados**:
   - Perfil de usuario en Firestore (`users/{userId}`)
-  - Información de cuenta Nessie (`nessieCustomerId`)
   - Preferencias de moneda y configuración
 
-### 2. Sistema de Tarjetas Digitales (Capital One)
-- **Ubicación**: `src/screens/capitalone/`, `src/services/nessieService.js`
+### 2. Sistema de Tarjetas Digitales
+- **Ubicación**: `src/screens/capitalone/`, `src/services/firestoreService.js`
 - **Funcionalidad**:
-  - Creación de cuentas en Nessie API
-  - Gestión de tarjetas digitales vinculadas a cuentas Nessie
+  - Creación de cuentas en Firestore
+  - Gestión de tarjetas digitales vinculadas a cuentas Firebase
   - Sincronización de balances en tiempo real
-- **API**: Nessie API (Capital One sandbox)
-- **Endpoints**:
-  - `POST /customers` - Crear cliente
-  - `GET /customers/{customerId}/accounts` - Obtener cuentas
-  - `GET /accounts/{accountId}` - Obtener balance actualizado
-- **Variables de entorno**: `NESSIE_API_KEY`
+- **Base de datos**: Firestore (Firebase)
 
 ### 3. Sistema de Transferencias P2P
 
 #### **Módulo: Transfer Service**
-- **Ubicación**: `src/services/nessieService.js`
+- **Ubicación**: `src/services/firestoreService.js`
 - **Funcionalidad**:
-  - Validación restrictiva de Account ID
+  - Validación de cuentas vía Firestore
   - Creación de transfers P2P
   - Actualización en tiempo real de balances
-- **API**: Nessie API (Capital One sandbox)
-- **Endpoints**:
-  - `GET /accounts/{accountId}` - Validar cuenta
-  - `POST /accounts/{accountId}/transfers` - Crear transferencia
-  - `GET /accounts/{accountId}/transfers` - Obtener historial
+- **Base de datos**: Firestore (Firebase)
 
 #### **Funciones Principales**:
 
 ```javascript
-// Validación restrictiva de Account ID
-validateAccountExists(accountId)
-// Retorna: { exists: boolean, accountData?: object, error?: string }
+// Validación de cuentas
+getAccountById(accountId)
+// Retorna: Promise<DocumentSnapshot> - Documento de cuenta de Firestore
 
 // Crear transferencia P2P
-createTransfer(payerAccountId, payeeAccountId, amount, medium, description)
-// Valida ambas cuentas, verifica fondos, ejecuta transferencia
+createFirebaseTransfer(payerAccountId, payeeAccountId, amount, medium, description)
+// Valida ambas cuentas, verifica fondos, ejecuta transferencia en Firestore
 
 // Actualizar balances en tiempo real
-refreshAccountsBalances(accountIds)
-// Obtiene balances actualizados de múltiples cuentas
+updateAccountBalance(accountId, amount)
+// Actualiza balance de cuenta en Firestore
 
-// Obtener transferencias de una cuenta
-getAccountTransfers(accountId)
+// Obtener transacciones del usuario
+getUserTransactions(userId)
+// Retorna: Promise<QuerySnapshot> - Transacciones del usuario
 ```
 
 #### **Screens**:
@@ -84,16 +75,16 @@ getAccountTransfers(accountId)
 
 **`transfers/{transferId}`**
 - `userId` (string, indexed) - UID del usuario que envía
-- `nessieTransferId` (string) - ID de transferencia en Nessie
-- `payer_id` (string) - ID cuenta origen
-- `payee_id` (string) - ID cuenta destino
-- `payer_nickname` (string) - Nombre cuenta origen
-- `payee_nickname` (string) - Nombre cuenta destino
+- `payerAccountId` (string) - ID cuenta origen en Firestore
+- `payeeAccountId` (string) - ID cuenta destino en Firestore
+- `payerName` (string) - Nombre del pagador
+- `payeeName` (string) - Nombre del receptor
 - `amount` (number) - Monto transferido
 - `medium` (string) - 'balance' o 'rewards'
 - `description` (string) - Descripción opcional
+- `type` (string) - 'transfer_in' o 'transfer_out'
 - `status` (string) - 'pending', 'completed', 'cancelled'
-- `transaction_date` (string) - Fecha ISO
+- `transactionDate` (timestamp) - Fecha de transacción
 - `createdAt` (timestamp)
 - `updatedAt` (timestamp)
 
@@ -107,14 +98,13 @@ getAccountTransfers(accountId)
 #### **Flujo de Transferencia**:
 1. Usuario selecciona cuenta origen
 2. Usuario ingresa Account ID destino
-3. Sistema valida Account ID de forma restrictiva
+3. Sistema valida cuenta destino en Firestore
 4. Usuario ingresa monto y descripción opcional
 5. Sistema valida fondos suficientes
 6. Modal de confirmación
-7. Ejecución de transferencia vía Nessie API
-8. Guardado de registro en Firestore
-9. Actualización de balances en tiempo real
-10. Navegación a pantalla de confirmación
+7. Ejecución de transferencia en Firestore
+8. Actualización de balances en tiempo real
+9. Navegación a pantalla de confirmación
 
 #### **Navegación**:
 ```javascript

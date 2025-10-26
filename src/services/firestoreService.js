@@ -2669,7 +2669,7 @@ export const getLoans = (userId, callback) => {
 /**
  * Guarda un nuevo contacto para transferencias en users/{userId}/contacts/{contactId}
  * @param {string} userId - UID del usuario
- * @param {object} contactData - { contactName, contactAlias, contactCLABE, contactNessieAccountId }
+ * @param {object} contactData - { contactName, contactAlias, contactCLABE, contactAccountId }
  * @returns {Promise<string>} - ID del contacto creado
  */
 export const saveContact = async (userId, contactData) => {
@@ -2679,8 +2679,8 @@ export const saveContact = async (userId, contactData) => {
     if (!contactData.contactCLABE || contactData.contactCLABE.length !== 16) {
       throw new Error('Valid 16-digit CLABE is required');
     }
-    if (!contactData.contactNessieAccountId) {
-      throw new Error('Nessie Account ID is required');
+    if (!contactData.contactAccountId) {
+      throw new Error('Account ID is required');
     }
 
     const contactsRef = collection(db, 'users', userId, 'contacts');
@@ -2688,7 +2688,7 @@ export const saveContact = async (userId, contactData) => {
       contactName: contactData.contactName.trim(),
       contactAlias: contactData.contactAlias?.trim() || '',
       contactCLABE: contactData.contactCLABE.trim(),
-      contactNessieAccountId: contactData.contactNessieAccountId,
+      contactAccountId: contactData.contactAccountId,
       createdAt: serverTimestamp(),
       lastUsed: serverTimestamp(),
     };
@@ -2807,6 +2807,204 @@ export const getContactByCLABE = async (userId, clabe) => {
     };
   } catch (error) {
     console.error('Error getting contact by CLABE:', error);
+    throw error;
+  }
+};
+
+/**
+ * BILLS MANAGEMENT FUNCTIONS (Firebase/Firestore only)
+ */
+
+/**
+ * Crea una nueva bill en Firestore
+ * @param {string} userId - UID del usuario
+ * @param {object} billData - Datos de la bill
+ * @returns {Promise<object>} - Bill creada
+ */
+export const createBill = async (userId, billData) => {
+  try {
+    if (!userId) {
+      throw new Error('User ID is required');
+    }
+
+    const billsRef = collection(db, 'users', userId, 'bills');
+    const billToCreate = {
+      ...billData,
+      userId,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    const docRef = await addDoc(billsRef, billToCreate);
+
+    console.log('✅ Bill created in Firestore:', docRef.id);
+
+    // Return the created bill with ID
+    return {
+      _id: docRef.id,
+      ...billToCreate
+    };
+  } catch (error) {
+    console.error('Error creating bill:', error);
+    throw error;
+  }
+};
+
+/**
+ * Obtiene todas las bills de una cuenta específica
+ * @param {string} userId - UID del usuario
+ * @param {string} accountId - ID de la cuenta
+ * @returns {Promise<array>} - Array de bills
+ */
+export const getBillsByAccount = async (userId, accountId) => {
+  try {
+    if (!userId || !accountId) {
+      console.warn('User ID and Account ID are required for getBillsByAccount');
+      return [];
+    }
+
+    const billsRef = collection(db, 'users', userId, 'bills');
+    const q = query(billsRef, where('accountId', '==', accountId), orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
+
+    const bills = snapshot.docs.map(doc => ({
+      _id: doc.id,
+      ...doc.data()
+    }));
+
+    console.log(`📄 Found ${bills.length} bills for account ${accountId}`);
+    return bills;
+  } catch (error) {
+    console.error('Error getting bills by account:', error);
+    throw error;
+  }
+};
+
+/**
+ * Obtiene todas las bills del usuario en tiempo real
+ * @param {string} userId - UID del usuario
+ * @param {function} callback - Función que recibe el array de bills
+ * @returns {function} - Función para cancelar la suscripción
+ */
+export const getUserBills = (userId, callback) => {
+  if (!userId) {
+    console.error('User ID is required for getUserBills');
+    return () => {};
+  }
+
+  const billsRef = collection(db, 'users', userId, 'bills');
+  const q = query(billsRef, orderBy('createdAt', 'desc'));
+
+  const unsubscribe = onSnapshot(q,
+    (snapshot) => {
+      const bills = snapshot.docs.map(doc => ({
+        _id: doc.id,
+        ...doc.data()
+      }));
+      callback(bills);
+    },
+    (error) => {
+      console.error('Error fetching bills:', error);
+      callback([]);
+    }
+  );
+
+  return unsubscribe;
+};
+
+/**
+ * Actualiza una bill existente
+ * @param {string} billId - ID de la bill
+ * @param {object} updates - Campos a actualizar
+ * @returns {Promise<void>}
+ */
+export const updateBill = async (billId, updates) => {
+  try {
+    if (!billId) {
+      throw new Error('Bill ID is required');
+    }
+
+    // We need to find the user ID from the bill document
+    // For now, we'll search through all users (not ideal but works for demo)
+    const usersRef = collection(db, 'users');
+    const usersSnapshot = await getDocs(usersRef);
+
+    let billRef = null;
+    let userId = null;
+
+    for (const userDoc of usersSnapshot.docs) {
+      const userBillsRef = collection(db, 'users', userDoc.id, 'bills');
+      const billDoc = await getDoc(doc(userBillsRef, billId));
+      if (billDoc.exists()) {
+        billRef = doc(userBillsRef, billId);
+        userId = userDoc.id;
+        break;
+      }
+    }
+
+    if (!billRef) {
+      throw new Error('Bill not found');
+    }
+
+    await updateDoc(billRef, {
+      ...updates,
+      updatedAt: serverTimestamp()
+    });
+
+    console.log('✅ Bill updated:', billId);
+  } catch (error) {
+    console.error('Error updating bill:', error);
+    throw error;
+  }
+};
+
+/**
+ * Elimina una bill
+ * @param {string} userId - UID del usuario
+ * @param {string} billId - ID de la bill a eliminar
+ * @returns {Promise<void>}
+ */
+export const deleteBill = async (userId, billId) => {
+  try {
+    if (!userId || !billId) {
+      throw new Error('User ID and Bill ID are required');
+    }
+
+    const billRef = doc(db, 'users', userId, 'bills', billId);
+    await deleteDoc(billRef);
+
+    console.log('✅ Bill deleted:', billId);
+  } catch (error) {
+    console.error('Error deleting bill:', error);
+    throw error;
+  }
+};
+
+/**
+ * Obtiene una bill específica por ID
+ * @param {string} userId - UID del usuario
+ * @param {string} billId - ID de la bill
+ * @returns {Promise<object|null>} - Bill encontrada o null
+ */
+export const getBillById = async (userId, billId) => {
+  try {
+    if (!userId || !billId) {
+      throw new Error('User ID and Bill ID are required');
+    }
+
+    const billRef = doc(db, 'users', userId, 'bills', billId);
+    const billDoc = await getDoc(billRef);
+
+    if (!billDoc.exists()) {
+      return null;
+    }
+
+    return {
+      _id: billDoc.id,
+      ...billDoc.data()
+    };
+  } catch (error) {
+    console.error('Error getting bill by ID:', error);
     throw error;
   }
 };

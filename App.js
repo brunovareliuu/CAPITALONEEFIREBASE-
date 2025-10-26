@@ -66,7 +66,6 @@ import TransferContactSearchScreen from './src/screens/TransferContactSearchScre
 import TransferAddContactScreen from './src/screens/TransferAddContactScreen';
 import TransferAmountScreen from './src/screens/TransferAmountScreen';
 import { getTarjetasDigitales, getUserProfile } from './src/services/firestoreService';
-import { getCustomerAccounts } from './src/services/nessieService';
 
 // removed WelcomeLoadingScreen per request
 
@@ -478,6 +477,12 @@ const AppStack = () => (
     <Stack.Screen
       name="Loan"
       component={LoanScreen}
+      options={{
+        headerShown: false,
+        presentation: 'card',
+      }}
+    />
+    <Stack.Screen
       name="TransferContactSearch"
       component={TransferContactSearchScreen}
       options={{
@@ -551,7 +556,7 @@ const AppNavigation = () => {
   const { user, loading, forceNavigationUpdate } = useAuth();
   const [showSplash, setShowSplash] = React.useState(true);
   const [completedAccountQuiz, setCompletedAccountQuiz] = React.useState(false);
-  const [hasNessieAccount, setHasNessieAccount] = React.useState(false);
+  const [hasAccounts, setHasAccounts] = React.useState(false);
   const [hasTarjetasDigitales, setHasTarjetasDigitales] = React.useState(false);
   const [checkingAccount, setCheckingAccount] = React.useState(false);
   const [pendingNavigation, setPendingNavigation] = React.useState(null);
@@ -565,29 +570,24 @@ const AppNavigation = () => {
     }
   }, [loading, user]);
 
-  // Verificar si el usuario tiene cuentas en Nessie
+  // Verificar si el usuario tiene cuentas
   React.useEffect(() => {
     if (user && !loading) {
       setCheckingAccount(true);
 
       const checkUserStatus = async () => {
         try {
-          // Get user profile to get nessieCustomerId
+          // Get user profile
           const userDoc = await getUserProfile(user.uid);
           if (userDoc.exists()) {
             const userData = userDoc.data();
-            const nessieCustomerId = userData.nessieCustomerId;
 
-            // Verificar si completó el quiz de cuenta
+            // Check if completed account quiz
             setCompletedAccountQuiz(userData.completedAccountQuiz || false);
 
-            if (nessieCustomerId) {
-              // Check if user has accounts in Nessie
-              const accounts = await getCustomerAccounts(nessieCustomerId);
-              setHasNessieAccount(accounts && accounts.length > 0);
-            } else {
-              setHasNessieAccount(false);
-            }
+            // Check if has accounts
+            const hasAccounts = userData.accounts?.allAccounts?.length > 0 || false;
+            setHasAccounts(hasAccounts);
           }
 
           // Check if user has tarjetas digitales
@@ -595,13 +595,13 @@ const AppNavigation = () => {
             setHasTarjetasDigitales(tarjetas.length > 0);
           });
 
+          setCheckingAccount(false);
           return unsubscribe;
         } catch (error) {
           console.error('Error checking user status:', error);
           setCompletedAccountQuiz(false);
-          setHasNessieAccount(false);
+          setHasAccounts(false);
           setHasTarjetasDigitales(false);
-        } finally {
           setCheckingAccount(false);
         }
       };
@@ -640,15 +640,18 @@ const AppNavigation = () => {
         {!user ? (
           <AuthStack />
         ) : !completedAccountQuiz ? (
-          // Usuario autenticado pero NO ha completado el quiz -> va directamente a elegir nickname para débito
+          // Usuario autenticado pero NO ha completado el onboarding -> NickNameDebit + TarjetaDigital
           <Stack.Navigator screenOptions={{ headerShown: false }}>
             <Stack.Screen name="NickNameDebit" component={NickNameDebitScreen} />
+            <Stack.Screen name="TarjetaDigital" component={TarjetaDigitalScreen} />
+            <Stack.Screen name="Main" component={AppStack} />
           </Stack.Navigator>
         ) : !hasTarjetasDigitales ? (
           // Usuario que completó el quiz pero sin tarjeta digital -> crear tarjeta
           <Stack.Navigator screenOptions={{ headerShown: false }}>
             <Stack.Screen name="NickNameDebit" component={NickNameDebitScreen} />
             <Stack.Screen name="TarjetaDigital" component={TarjetaDigitalScreen} />
+            <Stack.Screen name="Main" component={AppStack} />
           </Stack.Navigator>
         ) : (
           // Usuario con cuenta y tarjeta -> va a la app completa

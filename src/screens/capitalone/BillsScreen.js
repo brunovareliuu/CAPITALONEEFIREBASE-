@@ -18,12 +18,14 @@ import { useAuth } from '../../context/AuthContext';
 import { useFocusEffect } from '@react-navigation/native';
 import StandardHeader from '../../components/StandardHeader';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { getUserProfile } from '../../services/firestoreService';
-import { getCustomerAccounts, createBill, getAccountBills, updateBill, deleteBill } from '../../services/nessieService';
+import { getUserProfile, updateUserProfile, getUserAccounts, createBill as createBillFirestore, getBillsByAccount, updateBill as updateBillFirestore, deleteBill as deleteBillFirestore } from '../../services/firestoreService';
 import { addPaymentToHistory, initializeRecurringBill, deleteRecurringBill } from '../../services/firebaseRecurringService';
 
 const BillsScreen = ({ navigation }) => {
   const { user } = useAuth();
+  console.log('🏦 BillsScreen component initialized with user:', user);
+  console.log('👤 User object details:', { uid: user?.uid, email: user?.email, displayName: user?.displayName });
+
   const [userProfile, setUserProfile] = useState(null);
   const [userAccounts, setUserAccounts] = useState([]);
   const [selectedAccount, setSelectedAccount] = useState(null);
@@ -53,34 +55,41 @@ const BillsScreen = ({ navigation }) => {
     };
   });
 
-  // Load user profile and accounts
+
+  // Load user accounts from Firebase
   useEffect(() => {
-    const loadUserData = async () => {
-      try {
-        const profileDoc = await getUserProfile(user.uid);
-        if (profileDoc.exists()) {
-          const profile = profileDoc.data();
-          setUserProfile(profile);
+    console.log('🔄 useEffect triggered for user:', user?.uid);
 
-          // Load user's accounts from Nessie
-          if (profile.nessieCustomerId) {
-            const accounts = await getCustomerAccounts(profile.nessieCustomerId);
-            setUserAccounts(accounts.filter(acc => acc.balance > 0));
-            if (accounts.length > 0) {
-              setSelectedAccount(accounts[0]);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error loading user data:', error);
-        Alert.alert('Error', 'Failed to load account data');
-      } finally {
-        setLoading(false);
+    if (!user?.uid) {
+      console.log('⚠️ No user UID available, skipping loadUserData');
+      return;
+    }
+
+    // Load user accounts from Firebase
+    const unsubscribeAccounts = getUserAccounts(user.uid, (accounts) => {
+      console.log('🏦 Firebase accounts loaded:', accounts.length, accounts);
+
+      // Filter to only show accounts that can have bills (debit/checking accounts)
+      const billableAccounts = accounts.filter(account =>
+        account.accountType === 'debit' || account.accountType === 'checking'
+      );
+
+      console.log('💳 Billable accounts:', billableAccounts.length, billableAccounts);
+      setUserAccounts(billableAccounts);
+
+      // Auto-select first account if available
+      if (billableAccounts.length > 0 && !selectedAccount) {
+        console.log('✅ Auto-selecting first account:', billableAccounts[0]);
+        setSelectedAccount(billableAccounts[0]);
       }
-    };
 
-    loadUserData();
-  }, [user]);
+      setLoading(false);
+    });
+
+    return () => {
+      unsubscribeAccounts();
+    };
+  }, [user?.uid, selectedAccount]); // Changed dependency to user?.uid to be more specific
 
   // Load bills when account is selected
   useEffect(() => {
@@ -92,72 +101,86 @@ const BillsScreen = ({ navigation }) => {
   // Refresh bills when screen comes back into focus (e.g., after updating a bill in BillsDetailsScreen)
   useFocusEffect(
     React.useCallback(() => {
+      console.log('🔄 BillsScreen focused - checking if we need to refresh');
+      console.log('🏦 Current selectedAccount:', selectedAccount);
       if (selectedAccount) {
         console.log('🔄 BillsScreen focused - refreshing bills data');
         loadBills();
+      } else {
+        console.log('⚠️ BillsScreen focused but no selectedAccount');
       }
     }, [selectedAccount])
   );
 
   const loadBills = async () => {
-    if (!selectedAccount) return;
+    if (!selectedAccount) {
+      console.log('⚠️ loadBills called but no selectedAccount');
+      return;
+    }
 
     try {
-      console.log('📄 Loading bills for account:', selectedAccount._id);
-      const accountBills = await getAccountBills(selectedAccount._id);
-      console.log('📄 Bills loaded:', accountBills.length);
+      console.log('📄 Loading bills for account:', selectedAccount.id);
+      const accountBills = await getBillsByAccount(user.uid, selectedAccount.id);
+      console.log('📄 Bills loaded:', accountBills.length, accountBills);
       setBills(accountBills);
     } catch (error) {
-      console.error('Error loading bills:', error);
+      console.error('❌ Error loading bills:', error);
       Alert.alert('Error', 'Failed to load bills');
     }
   };
 
   const handleCreateBill = async () => {
+    console.log('💰 Starting bill creation...');
+    console.log('📝 Bill form:', billForm);
+    console.log('🏦 Selected account:', selectedAccount);
+    console.log('📋 User accounts:', userAccounts);
+
     if (!billForm.payee.trim()) {
+      console.log('❌ Validation failed: No payee');
       Alert.alert('Error', 'Please enter a payee');
       return;
     }
 
     if (!billForm.payment_amount.trim()) {
+      console.log('❌ Validation failed: No payment amount');
       Alert.alert('Error', 'Please enter a payment amount');
       return;
     }
 
     const amount = parseFloat(billForm.payment_amount);
     if (isNaN(amount) || amount <= 0) {
+      console.log('❌ Validation failed: Invalid amount', billForm.payment_amount);
       Alert.alert('Error', 'Please enter a valid payment amount');
       return;
     }
 
     if (!selectedAccount) {
-      Alert.alert('Error', 'No account selected');
+      console.log('❌ Validation failed: No account selected');
+      console.log('📋 Available accounts:', userAccounts);
+      Alert.alert('Error', 'No account selected. Available accounts: ' + userAccounts.length);
       return;
     }
 
+    console.log('✅ All validations passed, proceeding with bill creation...');
+
     setCreating(true);
     try {
-      console.log('💰 Creating bill...');
+      console.log('💰 Creating bill with data:', billForm);
+      console.log('🏦 Using account:', selectedAccount.id);
+
       const billData = {
-        status: billForm.is_recurring ? 'recurring' : 'pending', // Status based on is_recurring
+        accountId: selectedAccount.id, // Firebase account ID
+        status: billForm.is_recurring ? 'recurring' : 'pending',
         payee: billForm.payee.trim(),
         nickname: billForm.nickname.trim() || billForm.payee.trim(),
         payment_amount: amount,
+        payment_date: billForm.payment_date || null,
+        recurring_date: billForm.is_recurring ? parseInt(billForm.recurring_date) : null,
       };
 
-      // Solo agregar payment_date si tiene valor válido
-      if (billForm.payment_date && billForm.payment_date.trim()) {
-        billData.payment_date = billForm.payment_date.trim();
-      }
-
-      // Solo agregar recurring_date si es recurring y tiene valor válido
-      if (billForm.is_recurring && billForm.recurring_date && billForm.recurring_date.trim()) {
-        billData.recurring_date = parseInt(billForm.recurring_date.trim());
-      }
-
       console.log('Bill data to send:', billData);
-      const createdBill = await createBill(selectedAccount._id, billData);
-      console.log('✅ Bill created:', createdBill);
+      const createdBill = await createBillFirestore(user.uid, billData);
+      console.log('✅ Bill created in Firestore:', createdBill);
 
       // Initialize recurring bill in Firebase if it's recurring
       if (billForm.is_recurring) {
@@ -192,8 +215,9 @@ const BillsScreen = ({ navigation }) => {
       setShowCreateModal(false);
 
       Alert.alert('Success', 'Bill created successfully!');
+      console.log('✅ Bill creation completed successfully');
     } catch (error) {
-      console.error('Error creating bill:', error);
+      console.error('❌ Error creating bill:', error);
       Alert.alert('Error', 'Failed to create bill. Please try again.');
     } finally {
       setCreating(false);
@@ -204,7 +228,7 @@ const BillsScreen = ({ navigation }) => {
   const handleUpdateBillStatus = async (billId, newStatus) => {
     try {
       console.log('🔄 Updating bill status:', billId, newStatus);
-      await updateBill(billId, { status: newStatus });
+      await updateBillFirestore(billId, { status: newStatus });
       await loadBills(); // Reload bills
       Alert.alert('Success', `Bill marked as ${newStatus}`);
     } catch (error) {
@@ -225,7 +249,7 @@ const BillsScreen = ({ navigation }) => {
           onPress: async () => {
             try {
               console.log('🚫 Cancelling bill:', billId);
-              await updateBill(billId, { status: 'cancelled' });
+              await updateBillFirestore(billId, { status: 'cancelled' });
               await loadBills(); // Reload bills
               Alert.alert('Success', 'Bill cancelled successfully');
             } catch (error) {
@@ -251,14 +275,14 @@ const BillsScreen = ({ navigation }) => {
             try {
               console.log('🗑️ Permanently deleting bill:', billId);
 
-              // Delete from Nessie first
-              await deleteBill(billId);
-              console.log('✅ Deleted from Nessie');
+              // Delete from Firestore
+              await deleteBillFirestore(user.uid, billId);
+              console.log('✅ Deleted from Firestore');
 
-              // Delete from Firebase if it was recurring
+              // Delete from Firebase recurring if it was recurring
               if (isRecurring) {
                 await deleteRecurringBill(user.uid, billId);
-                console.log('✅ Deleted from Firebase');
+                console.log('✅ Deleted recurring bill from Firebase');
               }
 
               // Reload bills to update the UI
@@ -301,8 +325,8 @@ const BillsScreen = ({ navigation }) => {
               payee: bill.payee
             });
 
-            // Update bill status to completed in Nessie
-            await updateBill(bill._id, { status: 'completed' });
+            // Update bill status to completed in Firestore
+            await updateBillFirestore(bill._id, { status: 'completed' });
 
             // Reload bills to show updated status
             await loadBills();
@@ -452,9 +476,14 @@ const BillsScreen = ({ navigation }) => {
         )}
       />
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={styles.contentContainer}
+        showsVerticalScrollIndicator={false}
+      >
 
         {/* Account Selector */}
+        {console.log('🔍 Rendering account selector, userAccounts:', userAccounts.length, 'selectedAccount:', selectedAccount)}
         {userAccounts.length > 1 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Account</Text>
@@ -465,16 +494,16 @@ const BillsScreen = ({ navigation }) => {
             >
               {userAccounts.map((account) => (
                 <TouchableOpacity
-                  key={account._id}
+                  key={account.id}
                   style={[
                     styles.accountOption,
-                    selectedAccount?._id === account._id && styles.accountOptionSelected
+                    selectedAccount?.id === account.id && styles.accountOptionSelected
                   ]}
                   onPress={() => setSelectedAccount(account)}
                 >
                   <Text style={[
                     styles.accountOptionText,
-                    selectedAccount?._id === account._id && styles.accountOptionTextSelected
+                    selectedAccount?.id === account.id && styles.accountOptionTextSelected
                   ]}>
                     {account.nickname || account.type}
                   </Text>
@@ -527,6 +556,7 @@ const BillsScreen = ({ navigation }) => {
             <Text style={styles.sectionTitle}>Your Bills</Text>
             <Text style={styles.billsCount}>{getFilteredBills().length} bills</Text>
           </View>
+          {console.log('📋 Rendering bills list, filtered bills:', getFilteredBills().length)}
 
           {getFilteredBills().length === 0 ? (
             <View style={styles.emptyContainer}>
@@ -1154,6 +1184,11 @@ const styles = StyleSheet.create({
   filterButtonTextActive: {
     color: '#fff',
     fontWeight: '600',
+  },
+  contentContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
   },
 });
 

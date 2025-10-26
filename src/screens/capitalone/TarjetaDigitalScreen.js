@@ -15,7 +15,6 @@ import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useAuth } from '../../context/AuthContext';
 import { createTarjetaDigital, getUserProfile, getAccountById, updateAccount } from '../../services/firestoreService';
-import { getCustomerAccounts } from '../../services/nessieService';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -41,10 +40,10 @@ const isSmallScreen = screenHeight < 600;
 
 const TarjetaDigitalScreen = ({ navigation, route }) => {
   const { user, logout, triggerNavigationUpdate } = useAuth();
-  const { nickname, accountData, debitCardAccount, accountId } = route.params || {};
+  const { nickname, accountData, debitCardAccount, accountId, tarjetaId } = route.params || {};
 
   const [userProfile, setUserProfile] = useState(null);
-  const [nessieAccounts, setNessieAccounts] = useState([]);
+  const [firebaseAccount, setFirebaseAccount] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const [expiryDate, setExpiryDate] = useState('');
@@ -83,7 +82,7 @@ const TarjetaDigitalScreen = ({ navigation, route }) => {
     const generatedCvv = Math.floor(100 + Math.random() * 900).toString();
     setCvv(generatedCvv);
 
-    // Cargar perfil del usuario y cuentas de Nessie
+    // Cargar perfil del usuario y datos de la cuenta
     if (user) {
       const loadUserData = async () => {
         try {
@@ -93,47 +92,22 @@ const TarjetaDigitalScreen = ({ navigation, route }) => {
             setUserProfile(profileDoc.data());
           }
 
-          // Handle different account data sources
+          // Handle account data sources
           if (accountId) {
-            // If we have Firebase account ID, load it from Firestore
+            // Load from Firebase by accountId
             console.log('🔍 Loading account from Firebase by ID:', accountId);
             const accountDoc = await getAccountById(accountId);
             if (accountDoc.exists()) {
               const accountData = accountDoc.data();
               console.log('✅ Account loaded from Firebase:', accountData);
-
-              // Convert Firebase account format to Nessie-like format for compatibility
-              const firebaseAccount = {
-                id: accountDoc.id,
-                ...accountData,
-                // Map Firebase fields to expected Nessie format
-                _id: accountData.nessieAccountId || accountDoc.id,
-                account_number: accountData.accountNumber,
-                nickname: accountData.nickname,
-                balance: accountData.balance,
-                type: accountData.type,
-                rewards: accountData.rewards,
-              };
-              setNessieAccounts([firebaseAccount]);
+              setFirebaseAccount({ id: accountId, ...accountData });
             } else {
               console.error('❌ Account not found in Firebase:', accountId);
-              setNessieAccounts([]);
             }
           } else if (accountData || debitCardAccount) {
-            // Legacy support for direct account data
+            // Use provided account data
             const accountToUse = accountData || debitCardAccount;
-            setNessieAccounts([accountToUse]);
-          } else {
-            // Load Nessie accounts (fallback)
-            const nessieCustomerId = profileDoc.data()?.nessieCustomerId;
-            if (nessieCustomerId) {
-              console.log('🔄 Loading accounts from Nessie API...');
-              const accounts = await getCustomerAccounts(nessieCustomerId);
-              setNessieAccounts(accounts || []);
-            } else {
-              console.log('ℹ️ No Nessie Customer ID available');
-              setNessieAccounts([]);
-            }
+            setFirebaseAccount(accountToUse);
           }
         } catch (error) {
           console.error('Error loading user data:', error);
@@ -141,7 +115,7 @@ const TarjetaDigitalScreen = ({ navigation, route }) => {
       };
       loadUserData();
     }
-  }, [user]);
+  }, [user, accountId, accountData, debitCardAccount]);
 
   // Formatear número de cuenta para mostrar
   const formatAccountNumber = (accountNumber) => {
@@ -149,92 +123,23 @@ const TarjetaDigitalScreen = ({ navigation, route }) => {
     return accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ');
   };
 
-  // Crear tarjeta digital
-  const handleCreateTarjeta = async () => {
-    if (!user || !userProfile) {
-      Alert.alert('Error', 'No se pudo obtener la información del usuario');
-      return;
-    }
-
-    if (nessieAccounts.length === 0) {
-      Alert.alert('Error', 'No se encontró información de la cuenta');
-      return;
-    }
-
-    const account = nessieAccounts[0];
-    setLoading(true);
-    try {
-      // Datos de la tarjeta digital con información de Nessie
-      const tarjetaData = {
-        userId: user.uid,
-        nombreTitular: userProfile.first_name && userProfile.last_name
-          ? `${userProfile.first_name} ${userProfile.last_name}`
-          : user.displayName || 'Usuario',
-        email: userProfile.email || user.email,
-        accountNumber: account.account_number,
-        numeroTarjeta: account.account_number, // Usar account number como número de tarjeta
-        fechaExpiracion: expiryDate,
-        cvv: cvv,
-        tipo: account.type,
-        tipoTexto: getCardTypeText(account.type),
-        color: getCardColor(account.type),
-        saldo: account.balance,
-        rewards: account.rewards || 0,
-        nickname: nickname || account.nickname, // Use provided nickname or fallback to account nickname
-
-        // Firebase account reference (new)
-        accountId: account.id, // Firebase account ID
-
-        // Nessie compatibility (may be null)
-        nessieAccountId: account._id !== account.id ? account._id : null,
-
-        createdAt: new Date(),
-        activa: true,
-      };
-
-      // Guardar tarjeta digital en Firestore
-      const tarjetaDoc = await createTarjetaDigital(tarjetaData);
-      const tarjetaId = tarjetaDoc.id;
-
-      console.log('✅ Digital card created with ID:', tarjetaId);
-
-      // Actualizar la cuenta de Firebase para incluir la referencia a la tarjeta
-      if (account.id) {
-        console.log('📝 Updating account with digital card reference...');
-        const currentDigitalCards = account.digitalCards || [];
-        await updateAccount(account.id, {
-          digitalCards: [...currentDigitalCards, tarjetaId],
-        });
-        console.log('✅ Account updated with digital card reference');
-      }
-
-      // Mostrar mensaje de éxito y navegar
-      Alert.alert(
-        'Card Created!',
-        'Your digital card has been created successfully.',
-        [
-          {
-            text: 'Continue',
-            onPress: () => {
-              // Trigger navigation update to go to main app
-              triggerNavigationUpdate();
-            },
-          },
-        ]
-      );
-
-    } catch (error) {
-      console.error('Error creating tarjeta:', error);
-      Alert.alert('Error', 'Could not create digital card. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+  // Navigate to Home
+  const handleContinueToHome = () => {
+    console.log('🏠 Navigating to Home...');
+    // Trigger navigation update to refresh the app state
+    triggerNavigationUpdate();
+    
+    // Navigate to Home (Main stack)
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Main' }],
+    });
   };
 
   // Copiar número de cuenta al portapapeles
   const copyAccountNumber = async () => {
-    if (nessieAccounts.length > 0) {
-      await Clipboard.setStringAsync(nessieAccounts[0].account_number);
+    if (firebaseAccount?.accountNumber) {
+      await Clipboard.setStringAsync(firebaseAccount.accountNumber);
       Alert.alert('Copied', 'Account number copied to clipboard');
     }
   };
@@ -259,10 +164,10 @@ const TarjetaDigitalScreen = ({ navigation, route }) => {
         {/* Contenedor blanco con bordes redondeados */}
         <View style={styles.whiteContainer}>
 
-        {/* Vista previa de la tarjeta con información de Nessie */}
-        {nessieAccounts.length > 0 && (
+        {/* Vista previa de la tarjeta con información de Firebase */}
+        {firebaseAccount && (
           <View style={styles.cardPreview}>
-            <View style={[styles.card, { backgroundColor: getCardColor(nessieAccounts[0].type) }]}>
+            <View style={[styles.card, { backgroundColor: getCardColor(firebaseAccount.type || firebaseAccount.accountType) }]}>
               {/* Patrón de fondo sutil */}
               <View style={styles.cardPattern}>
                 <View style={styles.patternCircle1} />
@@ -272,17 +177,17 @@ const TarjetaDigitalScreen = ({ navigation, route }) => {
               <View style={styles.cardHeader}>
                 <View style={styles.cardLogo}>
                   <Icon name={
-                    nessieAccounts[0].type.toLowerCase().includes('credit') ? 'credit-card' :
-                    nessieAccounts[0].type.toLowerCase().includes('savings') ? 'piggy-bank' : 'wallet'
+                    (firebaseAccount.type || firebaseAccount.accountType).toLowerCase().includes('credit') ? 'credit-card' :
+                    (firebaseAccount.type || firebaseAccount.accountType).toLowerCase().includes('savings') ? 'piggy-bank' : 'wallet'
                   } size={24} color="#fff" />
-                  <Text style={styles.cardTypeText}>{getCardTypeText(nessieAccounts[0].type)}</Text>
+                  <Text style={styles.cardTypeText}>{getCardTypeText(firebaseAccount.type || firebaseAccount.accountType)}</Text>
                 </View>
                 <Text style={styles.cardBrand}>Capital One</Text>
               </View>
 
               <View style={styles.cardBody}>
                 <Text style={styles.cardNumber}>
-                  **** **** **** {nessieAccounts[0].account_number.slice(-4)}
+                  **** **** **** {firebaseAccount.accountNumber.slice(-4)}
                 </Text>
 
                 <View style={styles.cardDetails}>
@@ -348,12 +253,12 @@ const TarjetaDigitalScreen = ({ navigation, route }) => {
         </View>
 
         {/* Account Number */}
-        {nessieAccounts.length > 0 && (
+        {firebaseAccount && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Account Number</Text>
             <View style={styles.clabeCard}>
               <View style={styles.clabeContent}>
-                <Text style={styles.clabeText}>{formatAccountNumber(nessieAccounts[0].account_number)}</Text>
+                <Text style={styles.clabeText}>{formatAccountNumber(firebaseAccount.accountNumber)}</Text>
                 <TouchableOpacity
                   style={styles.copyButton}
                   onPress={copyAccountNumber}
@@ -386,22 +291,20 @@ const TarjetaDigitalScreen = ({ navigation, route }) => {
         </View>
 
 
-        {/* Botón crear */}
-        {nessieAccounts.length > 0 && (
+        {/* Botón continuar a Home */}
+        {firebaseAccount && (
           <View style={styles.buttonContainer}>
             <TouchableOpacity
               style={[
                 styles.createButton,
-                { backgroundColor: getCardColor(nessieAccounts[0].type) },
-                loading && styles.disabledButton
+                { backgroundColor: getCardColor(firebaseAccount.type || firebaseAccount.accountType) },
               ]}
-              onPress={handleCreateTarjeta}
-              disabled={loading}
+              onPress={handleContinueToHome}
             >
               <Text style={styles.createButtonText}>
-                {loading ? 'Creating card...' : 'Create Digital Card'}
+                Continue to Home
               </Text>
-              {!loading && <Icon name="arrow-right" size={16} color="#fff" style={styles.buttonIcon} />}
+              <Icon name="arrow-right" size={16} color="#fff" style={styles.buttonIcon} />
             </TouchableOpacity>
           </View>
         )}

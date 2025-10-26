@@ -16,12 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { getUserProfile, createTransaction, updateAccountBalance, getAccountById } from '../services/firestoreService';
-import {
-  validateAccountExists,
-  createTransfer,
-  getCustomerAccounts,
-} from '../services/nessieService';
+import { getUserProfile, createTransaction, updateAccountBalance, getAccountById, getUserAccounts } from '../services/firestoreService';
 import EventBus from '../utils/EventBus';
 
 const TransferScreen = ({ navigation }) => {
@@ -57,13 +52,22 @@ const TransferScreen = ({ navigation }) => {
           const profile = profileDoc.data();
           setUserProfile(profile);
 
-          // Load user's accounts from Nessie
-          if (profile.nessieCustomerId) {
-            const accounts = await getCustomerAccounts(profile.nessieCustomerId);
-            setUserAccounts(accounts.filter(acc => acc.balance > 0));
-            if (accounts.length > 0) {
-              setSelectedAccount(accounts[0]);
-            }
+          // Load user's accounts from Firebase
+          const accounts = await new Promise((resolve) => {
+            const unsubscribe = getUserAccounts(user.uid, (userAccounts) => {
+              unsubscribe();
+              resolve(userAccounts);
+            });
+          });
+
+          // Filter accounts that can be used for transfers (debit/checking accounts with positive balance)
+          const transferableAccounts = accounts.filter(acc =>
+            (acc.accountType === 'debit' || acc.accountType === 'checking') && acc.balance > 0
+          );
+
+          setUserAccounts(transferableAccounts);
+          if (transferableAccounts.length > 0) {
+            setSelectedAccount(transferableAccounts[0]);
           }
         }
       } catch (error) {
@@ -103,16 +107,21 @@ const TransferScreen = ({ navigation }) => {
     }
 
     setIsVerifying(true);
-    const validation = await validateAccountExists(accountId);
-
-    if (validation.exists) {
-      setAccountIdVerified(true);
-      setVerifiedAccountData(validation.accountData);
-      setVerifyError('');
-    } else {
+    try {
+      const accountDoc = await getAccountById(accountId);
+      if (accountDoc.exists()) {
+        setAccountIdVerified(true);
+        setVerifiedAccountData(accountDoc.data());
+        setVerifyError('');
+      } else {
+        setAccountIdVerified(false);
+        setVerifiedAccountData(null);
+        setVerifyError('Account not found');
+      }
+    } catch (error) {
       setAccountIdVerified(false);
       setVerifiedAccountData(null);
-      setVerifyError(validation.error);
+      setVerifyError('Could not validate account');
     }
     setIsVerifying(false);
   };
@@ -256,28 +265,57 @@ const TransferScreen = ({ navigation }) => {
       console.log('💰 Monto a transferir:', amt);
       console.log('💰 Balance ESPERADO después:', expectedNew);
 
-      console.log('✈️ Creating transfer...');
-      const result = await createTransfer(
-        selectedAccount._id,
-        verifiedAccountData.id,
-        amt,
-        medium,
-        description
-      );
-      console.log('✅ Transfer created:', result);
+      console.log('✈️ Processing transfer in Firebase...');
 
-      // Emitir evento para actualizar Home en tiempo real
+      // 1. Actualizar balance de la cuenta del remitente
+      await updateAccountBalance(selectedAccount.id, expectedNew);
+
+      // 2. Crear transacción en Firestore
+      const transactionData = {
+        type: 'transfer',
+        amount: -amt, // Negativo para el remitente
+        description: description || 'Transfer',
+        fromAccountId: selectedAccount.id,
+        toAccountId: verifiedAccountData.id,
+        toAccountNumber: verifiedAccountData.accountNumber,
+        toAccountHolder: verifiedAccountData.accountHolder,
+        medium: medium,
+        status: 'completed',
+        timestamp: new Date(),
+      };
+
+      await createTransaction(user.uid, transactionData);
+
+      console.log('✅ Transfer processed in Firebase');
+
+      // 3. Emitir evento para actualizar Home en tiempo real
       EventBus.emit('balance:updated', {
-        accountId: result.payerAccount.id,
-        newBalance: expectedNew,  // Usar el expectedNew directamente
+        accountId: selectedAccount.id,
+        newBalance: expectedNew,
         timestamp: Date.now(),
       });
 
-      // Navegar a confirmación con el balance calculado
+      // 4. Crear objeto de transferencia para compatibilidad con TransferConfirmation
+      const transferResult = {
+        payerAccount: {
+          id: selectedAccount.id,
+          balance: expectedNew
+        },
+        payeeAccount: {
+          id: verifiedAccountData.id,
+          account_number: verifiedAccountData.accountNumber
+        },
+        amount: amt,
+        description: description,
+        medium: medium,
+        status: 'completed'
+      };
+
+      // Navegar a confirmación
       navigation.replace('TransferConfirmation', {
-        transfer: result,
+        transfer: transferResult,
         previousBalance: previousBalance,
-        updatedPayerBalance: expectedNew,  // ✅ USAR EL EXPECTED DIRECTAMENTE
+        updatedPayerBalance: expectedNew,
         amount: amt,
       });
 

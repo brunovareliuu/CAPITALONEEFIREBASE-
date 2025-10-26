@@ -310,9 +310,9 @@ const TarjetaDigitalDetails = ({ navigation, route }) => {
     }]);
   };
 
-  const removeOptimisticTransaction = (nessieId) => {
-    console.log('🗑️ Removing optimistic transaction:', nessieId);
-    setOptimisticTransactions(prev => prev.filter(t => t.nessieId !== nessieId));
+  const removeOptimisticTransaction = (transactionId) => {
+    console.log('🗑️ Removing optimistic transaction:', transactionId);
+    setOptimisticTransactions(prev => prev.filter(t => t.id !== transactionId));
   };
 
   const clearOptimisticTransactions = () => {

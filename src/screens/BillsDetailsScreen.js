@@ -11,7 +11,6 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { updateBill } from '../services/nessieService';
 import {
   getPaymentHistory,
   addPaymentToHistory,
@@ -20,8 +19,8 @@ import {
   initializeRecurringBill,
   deleteRecurringBill
 } from '../services/firebaseRecurringService';
-import { deleteBill } from '../services/nessieService';
 import { migrateAsyncStorageToFirebase, checkMigrationNeeded } from '../services/migrationService';
+import { updateBill as updateBillFirestore, deleteBill as deleteBillFirestore } from '../services/firestoreService';
 import StandardHeader from '../components/StandardHeader';
 
 const BillsDetailsScreen = ({ navigation, route }) => {
@@ -106,7 +105,7 @@ const BillsDetailsScreen = ({ navigation, route }) => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await updateBill(bill._id, { status: 'cancelled' });
+              await updateBillFirestore(user.uid, bill._id, { status: 'cancelled' });
               Alert.alert('Eliminada', 'La factura ha sido marcada como cancelada');
               navigation.goBack(); // Volver a la pantalla anterior
             } catch (error) {
@@ -130,9 +129,9 @@ const BillsDetailsScreen = ({ navigation, route }) => {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Delete from Nessie first
-              await deleteBill(bill._id);
-              console.log('✅ Deleted from Nessie');
+              // Delete from Firestore first
+              await deleteBillFirestore(user.uid, bill._id);
+              console.log('✅ Deleted from Firestore');
 
               // Delete from Firebase
               await deleteRecurringBill(user.uid, bill._id);

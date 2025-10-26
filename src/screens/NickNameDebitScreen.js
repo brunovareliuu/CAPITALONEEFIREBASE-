@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { FontAwesome5 as Icon } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { updateUserProfile, getUserProfile, createAccount, updateAccount } from '../services/firestoreService';
+import { updateUserProfile, getUserProfile, createAccount, updateAccount, createTarjetaDigital } from '../services/firestoreService';
 import { navigationRef } from '../utils/navigationRef';
 import { CommonActions } from '@react-navigation/native';
 
@@ -37,7 +37,7 @@ const scaleSpacing = (size) => {
 };
 
 const NickNameDebitScreen = ({ navigation, route }) => {
-  const { user } = useAuth();
+  const { user, triggerNavigationUpdate } = useAuth();
   const { debitCardAccount } = route.params || {};
 
   const [nickname, setNickname] = useState('');
@@ -126,7 +126,7 @@ const NickNameDebitScreen = ({ navigation, route }) => {
     try {
       // If we don't have debitCardAccount (initial flow), create the debit account
       if (!debitCardAccount) {
-        // Get user profile - Firebase UID always exists, nessieCustomerId may be null
+        // Get user profile from Firestore
         const userDoc = await getUserProfile(user.uid);
         if (!userDoc.exists()) {
           throw new Error('User profile not found');
@@ -134,12 +134,10 @@ const NickNameDebitScreen = ({ navigation, route }) => {
 
         const userData = userDoc.data();
         const firebaseUID = user.uid; // Always available
-        const nessieCustomerId = userData.nessieCustomerId; // May be null if Nessie failed
         const userCurrency = userData.currency?.code || 'MXN';
 
         console.log('🔍 User data loaded:');
         console.log('  Firebase UID:', firebaseUID);
-        console.log('  Nessie Customer ID:', nessieCustomerId || 'Not available');
         console.log('  Currency:', userCurrency);
 
         // Generate account number (always 16 digits)
@@ -189,12 +187,7 @@ const NickNameDebitScreen = ({ navigation, route }) => {
           dailyLimit: 5000,
           monthlyLimit: 50000,
 
-          // Nessie compatibility
-          nessieCustomerId: nessieCustomerId, // May be null
-          nessieAccountId: null, // Will be set if Nessie succeeds
-          nessieStatus: nessieCustomerId ? 'pending' : 'failed',
-
-          // Metadata
+        // Metadata
           digitalCards: [], // Will store digital card IDs
           transactions: [], // Recent transactions
         };
@@ -207,57 +200,7 @@ const NickNameDebitScreen = ({ navigation, route }) => {
         console.log('✅ Returned doc ID:', firebaseAccountDoc.id);
         console.log('✅ Are they the same?', firebaseAccountId === firebaseAccountDoc.id);
 
-        // === STEP 2: Try to create account in Nessie (may fail) ===
-        let nessieAccountId = null;
-        let nessieStatus = 'failed';
-
-        if (nessieCustomerId) {
-          try {
-            console.log('🔄 Attempting to create account in Nessie API...');
-
-            const nessieAccountData = {
-              type: 'Checking',
-              nickname: nickname.trim(),
-              rewards: 0,
-              balance: 10000,
-              account_number: accountNumber,
-            };
-
-            const NESSIE_API_KEY = 'cf56fb5b0f0c73969f042c7ad5457306';
-            const nessieUrl = `http://api.nessieisreal.com/customers/${nessieCustomerId}/accounts?key=${NESSIE_API_KEY}`;
-
-            const response = await fetch(nessieUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(nessieAccountData),
-            });
-
-            if (!response.ok) {
-              const errorText = await response.text();
-              console.warn('⚠️ Nessie API failed:', response.status, errorText);
-            } else {
-              const result = await response.json();
-              nessieAccountId = result.objectCreated._id;
-              nessieStatus = 'completed';
-              console.log('✅ Account also created in Nessie with ID:', nessieAccountId);
-
-              // Update Firebase account with Nessie ID
-              await updateAccount(firebaseAccountId, {
-                nessieAccountId: nessieAccountId,
-                nessieStatus: 'completed',
-              });
-            }
-          } catch (nessieError) {
-            console.warn('⚠️ Nessie API failed, but continuing with Firebase only:', nessieError.message);
-            nessieStatus = 'failed';
-          }
-        } else {
-          console.log('ℹ️ No Nessie Customer ID available, skipping Nessie account creation');
-        }
-
-        // === STEP 3: Update user profile ===
+        // === STEP 2: Update user profile ===
         console.log('📝 Updating user profile...');
 
         // Get current user data to preserve existing accounts array
@@ -271,35 +214,110 @@ const NickNameDebitScreen = ({ navigation, route }) => {
         await updateUserProfile(firebaseUID, {
           completedAccountQuiz: true,
           accounts: updatedAccounts,
-          nessieStatus: nessieStatus, // Update overall Nessie status
         });
 
         console.log('✅ User profile updated');
         console.log('🎉 Account creation completed!');
         console.log('  Firebase Account ID:', firebaseAccountId);
-        console.log('  Nessie Status:', nessieStatus);
-        if (nessieAccountId) {
-          console.log('  Nessie Account ID:', nessieAccountId);
-        }
 
-        // === STEP 4: Navigate to create digital card ===
-        // Use simple navigation - the app will handle the stack change automatically
+        // === STEP 4: Create Digital Card ===
+        console.log('📝 Creating digital card...');
+
+        // Generate card details
+        const today = new Date();
+        const expiryYear = today.getFullYear() + 5;
+        const expiryMonth = String(today.getMonth() + 1).padStart(2, '0');
+        const expiryDate = `${expiryMonth}/${String(expiryYear).slice(-2)}`;
+        const cvv = Math.floor(100 + Math.random() * 900).toString();
+
+        const tarjetaData = {
+          userId: firebaseUID,
+          nombreTitular: userData.name || user.displayName || 'Usuario',
+          email: userData.email || user.email,
+          accountNumber: accountNumber,
+          numeroTarjeta: accountNumber,
+          fechaExpiracion: expiryDate,
+          cvv: cvv,
+          tipo: 'Checking',
+          tipoTexto: 'DEBIT',
+          color: '#004977',
+          saldo: 10000,
+          rewards: 0,
+          nickname: nickname.trim(),
+          accountId: firebaseAccountId,
+          createdAt: new Date(),
+          activa: true,
+        };
+
+        const tarjetaDoc = await createTarjetaDigital(tarjetaData);
+        const tarjetaId = tarjetaDoc.id;
+
+        console.log('✅ Digital card created with ID:', tarjetaId);
+
+        // Update account with digital card reference
+        await updateAccount(firebaseAccountId, {
+          digitalCards: [tarjetaId],
+        });
+
+        console.log('✅ Account updated with digital card reference');
+
+        // === STEP 5: Navigate to TarjetaDigitalScreen ===
         navigation.navigate('TarjetaDigital', {
           nickname: nickname.trim(),
-          accountId: firebaseAccountId, // Pass Firebase account ID
+          accountId: firebaseAccountId,
           accountData: {
             id: firebaseAccountId,
             ...firebaseAccountData,
-            nessieAccountId: nessieAccountId,
-            nessieStatus: nessieStatus,
           },
+          tarjetaId: tarjetaId,
         });
 
       } else {
-        // If we already have debitCardAccount, just navigate with nickname
+        // If we already have debitCardAccount, create digital card and navigate
+        console.log('📝 Creating digital card for existing account...');
+
+        // Generate card details
+        const today = new Date();
+        const expiryYear = today.getFullYear() + 5;
+        const expiryMonth = String(today.getMonth() + 1).padStart(2, '0');
+        const expiryDate = `${expiryMonth}/${String(expiryYear).slice(-2)}`;
+        const cvv = Math.floor(100 + Math.random() * 900).toString();
+
+        const tarjetaData = {
+          userId: user.uid,
+          nombreTitular: user.displayName || 'Usuario',
+          email: user.email,
+          accountNumber: debitCardAccount.accountNumber,
+          numeroTarjeta: debitCardAccount.accountNumber,
+          fechaExpiracion: expiryDate,
+          cvv: cvv,
+          tipo: debitCardAccount.type || 'Checking',
+          tipoTexto: 'DEBIT',
+          color: '#004977',
+          saldo: debitCardAccount.balance || 10000,
+          rewards: debitCardAccount.rewards || 0,
+          nickname: nickname.trim(),
+          accountId: debitCardAccount.id,
+          createdAt: new Date(),
+          activa: true,
+        };
+
+        const tarjetaDoc = await createTarjetaDigital(tarjetaData);
+        const tarjetaId = tarjetaDoc.id;
+
+        console.log('✅ Digital card created with ID:', tarjetaId);
+
+        // Update account with digital card reference
+        await updateAccount(debitCardAccount.id, {
+          digitalCards: [tarjetaId],
+        });
+
+        console.log('✅ Account updated with digital card reference');
+
         navigation.navigate('TarjetaDigital', {
           nickname: nickname.trim(),
           debitCardAccount: debitCardAccount,
+          tarjetaId: tarjetaId,
         });
       }
     } catch (error) {
