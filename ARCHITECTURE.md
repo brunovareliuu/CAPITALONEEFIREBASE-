@@ -527,12 +527,60 @@ useEffect(() => {
 - ❌ Cientos de lecturas de Firestore innecesarias
 - ❌ UI congelado por 2-3 segundos
 - ❌ Listeners recreados constantemente
+- ❌ Scroll se resetea constantemente a posición inicial
 
 #### Después de Optimización
 - ✅ Creación de tarjetas instantánea
 - ✅ Solo lecturas necesarias de Firestore
 - ✅ UI responsive y fluido
 - ✅ Listeners persisten entre actualizaciones
+- ✅ Scroll mantiene su posición correctamente
+
+### 3. Solución al Problema de Scroll Reset
+
+**Problema**: El ScrollView se reseteaba a su posición inicial cada vez que había un re-render causado por actualizaciones de Firestore.
+
+**Causa Raíz**: 
+- El componente `BalanceCard` se re-renderizaba en cada actualización de estado
+- Los listeners de Firestore actualizaban estados constantemente (balance, expenses, etc.)
+- Cada re-render recreaba el ScrollView, perdiendo su posición de scroll
+
+**Solución Implementada**:
+
+1. **Memoización con `useMemo`** - Línea ~914:
+```javascript
+const BalanceCard = useMemo(() => {
+  // ... componente completo
+}, [tarjetaDigital, tarjetaDigitalBalance, user, refreshing, onRefresh, savingsCard, savingsCardBalance, creditCard, creditCardLimit, navigation]);
+```
+
+2. **Key estable para ScrollView** - Línea ~921:
+```javascript
+<ScrollView
+  key="balance-card-scroll" // Previene reset en re-renders
+  style={styles.cleanMainContainer}
+  contentContainerStyle={{ flexGrow: 1 }}
+  scrollEnabled={true}
+  nestedScrollEnabled={true}
+  removeClippedSubviews={false}
+  keyboardShouldPersistTaps="handled"
+>
+```
+
+3. **Eliminación de `flex: 1` del estilo** - Línea ~3205:
+```javascript
+cleanMainContainer: {
+  // REMOVED flex: 1 - Causaba conflictos con scroll
+  backgroundColor: '#FFFFFF',
+},
+```
+
+4. **Contenedor con flex apropiado** - Línea ~1975:
+```javascript
+<View style={{ flex: 1 }}>
+  {tarjetaDigital ? BalanceCard : <CardSliderWithTransactions />}
+</View>
+```
 
 ### Impacto en Costos
 **Reducción de lecturas de Firestore**: ~95%
