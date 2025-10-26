@@ -6,8 +6,10 @@ Para que la integración de WhatsApp funcione correctamente, necesitas configura
 
 ### Variables Requeridas:
 
-1. **WHATSAPP_PHONE_NUMBER_ID**: `746704208532528`
+1. **WHATSAPP_PHONE_NUMBER_ID**: `746704208532528` (actualizado para template `bienvenida_capi`)
 2. **WHATSAPP_ACCESS_TOKEN**: `EAAatfRZA2uCIBPyJgesZAszfcEgVopEJ5tIeKOpV5icaZAJttoWRJ3HJ62iABSzltMvNBcMRgEKeK1vwNi2aEMBu6GSPKQ3yMTZA6WzmTLr4zARMtGZApppKQvEFtSBZCEXBGoZAHN7OQNQTbBVpAEuc0FGGjdcdTpbo1tfxw0s9ceSg4ptfygj3QOFBacm4YPi9gZDZD`
+
+> **NOTA**: Las credenciales ya están configuradas en Firebase Functions Secrets. No es necesario volver a configurarlas a menos que hayan cambiado.
 
 ### Cómo Configurar (Opción 1 - Firebase Console):
 
@@ -40,12 +42,12 @@ firebase functions:secrets:set WHATSAPP_ACCESS_TOKEN
 
 ## Detalles del Template de WhatsApp
 
-- **Nombre del Template**: `mensaje_bienvenida_cliente`
+- **Nombre del Template**: `bienvenida_capi`
 - **Estado**: APPROVED ✅
 - **Idioma**: `es_ES` (Español)
-- **Categoría**: MARKETING
+- **Categoría**: UTILITY
 - **Variables**:
-  - `{{1}}`: Nombre del cliente
+  - `{{1}}`: Nombre del cliente (primer nombre)
 
 ## Contenido del Mensaje
 
@@ -53,28 +55,20 @@ Cuando un usuario se registra, recibirá este mensaje:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ 📋 HEADER: Bienvenido a Capital One!           │
+│ 📋 HEADER: Bienvenid@ a Capital One!           │
 │                                                  │
-│ 👋 Hola {{1}},                                  │
-│                                                  │
-│ ¡Nos alegra darte la bienvenida a Capital One! │
+│ Hola {{1}},                                     │
+│ ¡bienvenido(a) a Capital One!                   │
 │                                                  │
 │ Soy Capi, tu asistente financiero personal.    │
-│ Estoy aquí para ayudarte a alcanzar tus metas  │
-│ y mantenerte al tanto de tu progreso           │
-│ financiero, paso a paso.                        │
-│                                                  │
-│ A partir de ahora recibirás notificaciones e   │
-│ información personalizada...                    │
-│                                                  │
-│ 💡 Consejo de hoy: cada pequeño avance cuenta. │
-│ Empecemos juntos este camino hacia tu          │
-│ libertad financiera.                            │
+│ Tu nueva cuenta ha sido creada exitosamente.   │
+│ A partir de ahora recibirás recordatorios,     │
+│ consejos y notificaciones sobre tu progreso    │
+│ financiero para ayudarte a alcanzar tus        │
+│ metas. 💼                                       │
 │                                                  │
 │ — Capi                                          │
-│ Tu asistente financiero en Capital One 💼      │
-│                                                  │
-│ 📝 FOOTER: Capital One                          │
+│ Tu asistente financiero en Capital One         │
 └─────────────────────────────────────────────────┘
 ```
 

@@ -43,7 +43,7 @@ const whatsappAccessToken = defineSecret("WHATSAPP_ACCESS_TOKEN");
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const WHATSAPP_API_VERSION = "v20.0";
-const WHATSAPP_TEMPLATE_NAME = "mensaje_bienvenida_cliente";
+const WHATSAPP_TEMPLATE_NAME = "bienvenida_capi";
 const WHATSAPP_TEMPLATE_LANGUAGE = "es_ES";
 
 // ═══════════════════════════════════════════════════════════════════════════════

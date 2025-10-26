@@ -181,10 +181,17 @@ match /transfers/{transferId} {
 - Proyecto: capitalonehackmty
 
 ### WhatsApp Business API
-- Cloud Function: `sendWelcomeWhatsApp`
-- Secrets en Firebase Functions:
-  - `WHATSAPP_PHONE_NUMBER_ID`
-  - `WHATSAPP_ACCESS_TOKEN`
+- **Cloud Function**: `sendWelcomeWhatsApp`
+- **Template**: `bienvenida_capi` (APPROVED ✅)
+- **Idioma**: es_ES
+- **Trigger**: Se envía automáticamente al crear una cuenta nueva
+- **Secrets en Firebase Functions**:
+  - `WHATSAPP_PHONE_NUMBER_ID`: 746704208532528
+  - `WHATSAPP_ACCESS_TOKEN`: (configurado en Firebase Secrets)
+- **Integración**:
+  - Cliente: `src/services/whatsappService.js`
+  - Servidor: `functions/index.js`
+  - Configuración: `WHATSAPP_CONFIG.md`
 
 ## Dependencias Principales
 
@@ -267,10 +274,12 @@ match /transfers/{transferId} {
 ### 1. Onboarding de Usuario Nuevo
 1. WelcomeScreen → LoginScreen/SignUpScreen
 2. Registro con email, contraseña, nombre, teléfono, moneda
-3. Envío de mensaje WhatsApp de bienvenida (Cloud Function)
-4. AccountQuizScreen (creación de cuenta Nessie)
-5. TarjetaDigitalScreen (creación de tarjeta digital)
-6. HomeScreen (acceso completo a la app)
+3. Creación de usuario en Firebase Auth
+4. Creación de perfil en Firestore
+5. **Envío automático de mensaje WhatsApp de bienvenida** (template: `bienvenida_capi`)
+6. AccountQuizScreen (creación de cuenta Nessie)
+7. TarjetaDigitalScreen (creación de tarjeta digital)
+8. HomeScreen (acceso completo a la app)
 
 ### 2. Transferencia P2P
 1. HomeScreen → Quick Action "Transferir" → TransferScreen
