@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -910,15 +910,17 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  // Capital One Clean UI
-  const BalanceCard = () => {
+  // Capital One Clean UI - OPTIMIZED with useMemo to prevent unnecessary re-renders
+  const BalanceCard = useMemo(() => {
     if (!tarjetaDigital) return null;
 
     const firstName = user?.displayName?.split(' ')[0] || user?.email?.split('@')[0] || 'User';
 
     return (
       <ScrollView
+        key="balance-card-scroll" // FIXED: Prevent scroll reset on re-renders
         style={styles.cleanMainContainer}
+        contentContainerStyle={{ flexGrow: 1 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -927,6 +929,10 @@ const HomeScreen = ({ navigation }) => {
           />
         }
         showsVerticalScrollIndicator={false}
+        scrollEnabled={true}
+        nestedScrollEnabled={true}
+        removeClippedSubviews={false}
+        keyboardShouldPersistTaps="handled"
       >
         {/* Top Section - Capital One Blue */}
         <View style={styles.cleanTopSection}>
@@ -1270,7 +1276,7 @@ const HomeScreen = ({ navigation }) => {
         <View style={{ height: 40 }} />
       </ScrollView>
     );
-  };
+  }, [tarjetaDigital, tarjetaDigitalBalance, user, refreshing, onRefresh, savingsCard, savingsCardBalance, creditCard, creditCardLimit, navigation]);
 
   const EmptyState = () => (
     <View style={styles.emptyContainer}>
@@ -1909,11 +1915,13 @@ const HomeScreen = ({ navigation }) => {
       <StatusBar style="light" />
 
       {/* Show Digital Card if exists, otherwise show regular cards */}
-      {tarjetaDigital ? (
-        <BalanceCard />
-      ) : (
-        <CardSliderWithTransactions />
-      )}
+      <View style={{ flex: 1 }}>
+        {tarjetaDigital ? (
+          BalanceCard
+        ) : (
+          <CardSliderWithTransactions />
+        )}
+      </View>
 
       {/* Floating Action Button - Only show when user has regular cards (not digital card) */}
       {!tarjetaDigital && cards.length > 0 && (
@@ -3146,7 +3154,7 @@ const styles = StyleSheet.create({
   
   // Main Container
   cleanMainContainer: {
-    flex: 1,
+    // REMOVED flex: 1 - This was causing scroll issues after creating cards
     backgroundColor: '#FFFFFF',
   },
 
